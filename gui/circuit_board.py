@@ -286,7 +286,7 @@ class ComponentGraphicsItem(QGraphicsItem):
         painter.setPen(QPen(Qt.black, 1.5))
 
         # Vertical line
-        painter.drawLine(0, -height/2, 0, height/4)
+        painter.drawLine(QLineF(0, -height/2, 0, height/4))
 
         # Horizontal lines
         line_width = width * 0.8
@@ -295,7 +295,7 @@ class ComponentGraphicsItem(QGraphicsItem):
         for i in range(3):
             y = height/4 + i * height/8
             curr_width = line_width * (3-i) / 3
-            painter.drawLine(-curr_width/2, y, curr_width/2, y)
+            painter.drawLine(QLineF(-curr_width/2, y, curr_width/2, y))
 
     def draw_dc_voltage_source(self, painter, width, height):
         """Draw a DC voltage source.

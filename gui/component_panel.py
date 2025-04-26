@@ -420,6 +420,14 @@ class ComponentPropertiesDialog(QDialog):
             self.form_layout.addRow("Max Current:", current_widget)
             self.property_widgets["max_current"] = current_widget
 
+        elif self.component_type == "Ground":
+            # Ground doesn't need any properties, but we'll add a label to inform the user
+            label = QLabel("Ground connection doesn't require any properties.")
+            self.form_layout.addRow(label)
+
+            # Add a hidden dummy property so the dialog returns a non-empty properties dict
+            self.property_widgets["dummy"] = True
+
         elif self.component_type == "DCVoltageSource":
             # Voltage
             voltage_widget = QDoubleSpinBox()
@@ -577,6 +585,10 @@ class ComponentPropertiesDialog(QDialog):
         """
         properties = {}
 
+        # Special case for Ground component which uses a dummy property
+        if self.component_type == "Ground":
+            return properties  # Return empty properties dict for Ground
+
         for name, widget in self.property_widgets.items():
             if isinstance(widget, QComboBox):
                 if name == "state":
@@ -588,6 +600,8 @@ class ComponentPropertiesDialog(QDialog):
                 properties[name] = widget.value()
             elif isinstance(widget, QLineEdit):
                 properties[name] = widget.text()
+            elif not isinstance(widget, QWidget):  # Handle non-widget values (like our dummy property)
+                continue
 
         return properties
 
