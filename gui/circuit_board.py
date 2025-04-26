@@ -763,12 +763,6 @@ class ComponentGraphicsItem(QGraphicsItem):
         conn_str = ", ".join(f"{k}" for k in self.component.connections.keys())
         painter.drawText(-50, -10, f"Conn: {conn_str}")
 
-
-
-
-
-
-
     def update_position(self):
         """Update the position and rotation from the component model."""
         grid_size = self.board.grid_size
@@ -973,8 +967,6 @@ class ComponentGraphicsItem(QGraphicsItem):
             self.selected = bool(value)
 
         return super().itemChange(change, value)
-
-
 
 
 class WireGraphicsItem(QGraphicsItem):
@@ -1323,6 +1315,31 @@ class CircuitBoardWidget(QGraphicsView):
 
         # Pass the event to the parent class
         return super().eventFilter(obj, event)
+
+    def set_mode(self, mode):
+        """Set the current interaction mode.
+
+        Args:
+            mode: CircuitBoardMode value
+        """
+        self.mode = mode
+
+        # Change cursor based on mode
+        if mode == CircuitBoardMode.SELECT:
+            self.setCursor(Qt.ArrowCursor)
+        elif mode == CircuitBoardMode.PLACE:
+            self.setCursor(Qt.CrossCursor)
+        elif mode == CircuitBoardMode.CONNECT:
+            self.setCursor(Qt.CrossCursor)  # Or a custom connector cursor
+
+        # Cancel any ongoing operations
+        if mode != CircuitBoardMode.PLACE and self.placement_component:
+            self._cancel_placement()
+        if mode != CircuitBoardMode.CONNECT and self.creating_connection:
+            self._cancel_connection()
+
+        # Log the mode change
+        logger.info(f"Mode changed to {mode.name}")
 
     def _draw_grid(self):
         """Draw the grid background."""
@@ -1871,6 +1888,23 @@ class CircuitBoardWidget(QGraphicsView):
         Args:
             event: QKeyEvent
         """
+        # Check for mode switching keys
+        if event.key() == Qt.Key_S:
+            # Select mode
+            self.set_mode(CircuitBoardMode.SELECT)
+            event.accept()
+            return
+        elif event.key() == Qt.Key_P:
+            # Place mode
+            self.set_mode(CircuitBoardMode.PLACE)
+            event.accept()
+            return
+        elif event.key() == Qt.Key_C:
+            # Connect mode
+            self.set_mode(CircuitBoardMode.CONNECT)
+            event.accept()
+            return
+
         # Handle escape to cancel placement or connection
         if event.key() == Qt.Key_Escape:
             if self.creating_connection:
@@ -1891,6 +1925,25 @@ class CircuitBoardWidget(QGraphicsView):
 
         # Pass the event to the base class
         super().keyPressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        """Handle mouse double-click events at the board level.
+
+        Args:
+            event: QMouseEvent
+        """
+        # Convert mouse position to scene coordinates
+        scene_pos = self.mapToScene(event.pos())
+
+        # Check if there's a component at this position
+        item = self.scene.itemAt(scene_pos, self.transform())
+
+        if isinstance(item, ComponentGraphicsItem):
+            # Let the component handle the double click
+            item.mouseDoubleClickEvent(event)
+        else:
+            # Handle board-level double click
+            super().mouseDoubleClickEvent(event)
 
     def _show_context_menu(self, pos):
         """Show the context menu.
@@ -2487,681 +2540,3 @@ class CircuitBoardWidget(QGraphicsView):
             return False
 
         return True
-
-    def _draw_resistor(self, painter, width, height):
-        """Draw a resistor.
-
-        Args:
-            painter: QPainter object
-            width, height: Component dimensions
-        """
-        # Draw component body
-        painter.setBrush(QBrush(Qt.white))
-        # Use QRectF instead of passing individual float arguments
-        painter.drawRect(QRectF(-width/2 + 10, -height/2, width - 20, height))
-
-        # Draw zigzag symbol
-        painter.setPen(QPen(Qt.black, 1.5))
-        path = QPainterPath()
-        path.moveTo(-width/2 + 10, 0)
-
-        zigzag_width = width - 20
-        zigzag_steps = 6
-        step_width = zigzag_width / zigzag_steps
-        half_height = height / 4
-
-        for i in range(zigzag_steps + 1):
-            x = -width/2 + 10 + i * step_width
-            y = half_height if i % 2 == 0 else -half_height
-            path.lineTo(x, y)
-
-        path.lineTo(width/2 - 10, 0)
-        painter.drawPath(path)
-
-        # Draw connection lines
-        painter.drawLine(-width/2, 0, -width/2 + 10, 0)
-        painter.drawLine(width/2 - 10, 0, width/2, 0)
-
-    def _draw_capacitor(self, painter, width, height):
-        """Draw a capacitor.
-
-        Args:
-            painter: QPainter object
-            width, height: Component dimensions
-        """
-        # Draw plates
-        painter.setBrush(QBrush(Qt.white))
-        painter.setPen(QPen(Qt.black, 1.5))
-
-        # Left plate
-        painter.drawLine(-5, -height/2, -5, height/2)
-
-        # Right plate
-        painter.drawLine(5, -height/2, 5, height/2)
-
-        # Draw connection lines
-        painter.drawLine(-width/2, 0, -5, 0)
-        painter.drawLine(5, 0, width/2, 0)
-
-    def _draw_inductor(self, painter, width, height):
-        """Draw an inductor.
-
-        Args:
-            painter: QPainter object
-            width, height: Component dimensions
-        """
-        # Draw component body
-        painter.setBrush(QBrush(Qt.white))
-        painter.setPen(QPen(Qt.black, 1.5))
-
-        # Draw inductor coil symbol
-        coil_width = width - 20
-        coil_steps = 4
-        step_width = coil_width / (coil_steps * 2)
-        coil_radius = height / 3
-
-        path = QPainterPath()
-        path.moveTo(-width/2, 0)
-        path.lineTo(-width/2 + 10, 0)
-
-        start_x = -width/2 + 10
-        for i in range(coil_steps):
-            # Draw semi-circle
-            center_x = start_x + step_width + i * 2 * step_width
-            path.arcTo(center_x - coil_radius, -coil_radius,
-                       coil_radius * 2, coil_radius * 2,
-                       180, -180)
-
-        path.lineTo(width/2, 0)
-        painter.drawPath(path)
-
-    def _draw_ground(self, painter, width, height):
-        """Draw a ground symbol.
-
-        Args:
-            painter: QPainter object
-            width, height: Component dimensions
-        """
-        # Draw ground symbol
-        painter.setBrush(QBrush(Qt.black))
-        painter.setPen(QPen(Qt.black, 1.5))
-
-        # Vertical line
-        painter.drawLine(0, -height/2, 0, height/4)
-
-        # Horizontal lines
-        line_width = width * 0.8
-
-        # Draw three horizontal lines of decreasing width
-        for i in range(3):
-            y = height/4 + i * height/8
-            curr_width = line_width * (3-i) / 3
-            painter.drawLine(-curr_width/2, y, curr_width/2, y)
-
-    def _draw_dc_voltage_source(self, painter, width, height):
-        """Draw a DC voltage source.
-
-        Args:
-            painter: QPainter object
-            width, height: Component dimensions
-        """
-        # Draw circle
-        painter.setBrush(QBrush(Qt.white))
-        painter.setPen(QPen(Qt.black, 1.5))
-
-        radius = min(width, height) / 2 - 5
-        painter.drawEllipse(QPointF(0, 0), radius, radius)
-
-        # Draw + and - symbols
-        painter.setPen(QPen(Qt.black, 2))
-
-        # + symbol at top
-        plus_size = radius / 3
-        painter.drawLine(0, -plus_size, 0, plus_size)
-        painter.drawLine(-plus_size, 0, plus_size, 0)
-
-        # - symbol at bottom
-        minus_size = radius / 3
-        painter.drawLine(-minus_size, -radius/2, plus_size, -radius/2)
-
-        # Draw connection lines
-        painter.setPen(QPen(Qt.black, 1.5))
-        painter.drawLine(0, -radius, 0, -height/2)
-        painter.drawLine(0, radius, 0, height/2)
-
-    def _draw_ac_voltage_source(self, painter, width, height):
-        """Draw an AC voltage source.
-
-        Args:
-            painter: QPainter object
-            width, height: Component dimensions
-        """
-        # Draw circle
-        painter.setBrush(QBrush(Qt.white))
-        painter.setPen(QPen(Qt.black, 1.5))
-
-        radius = min(width, height) / 2 - 5
-        painter.drawEllipse(QPointF(0, 0), radius, radius)
-
-        # Draw sine wave symbol
-        painter.setPen(QPen(Qt.black, 1.5))
-
-        wave_width = radius * 1.2
-        wave_height = radius / 2
-
-        path = QPainterPath()
-        path.moveTo(-wave_width/2, 0)
-
-        # Draw one cycle of a sine wave
-        steps = 20
-        for i in range(steps + 1):
-            x = -wave_width/2 + i * wave_width / steps
-            y = -wave_height * math.sin(i * 2 * math.pi / steps)
-            path.lineTo(x, y)
-
-        painter.drawPath(path)
-
-        # Draw connection lines
-        painter.drawLine(0, -radius, 0, -height/2)
-        painter.drawLine(0, radius, 0, height/2)
-
-    def _draw_dc_current_source(self, painter, width, height):
-        """Draw a DC current source.
-
-        Args:
-            painter: QPainter object
-            width, height: Component dimensions
-        """
-        # Draw circle
-        painter.setBrush(QBrush(Qt.white))
-        painter.setPen(QPen(Qt.black, 1.5))
-
-        radius = min(width, height) / 2 - 5
-        painter.drawEllipse(QPointF(0, 0), radius, radius)
-
-        # Draw arrow symbol
-        painter.setPen(QPen(Qt.black, 1.5))
-
-        # Arrow line
-        arrow_height = radius * 1.2
-        painter.drawLine(0, -arrow_height/2, 0, arrow_height/2)
-
-        # Arrow head
-        arrow_head_size = radius / 3
-        arrow_head = QPolygonF([
-            QPointF(0, arrow_height/2),
-            QPointF(-arrow_head_size, arrow_height/2 - arrow_head_size),
-            QPointF(arrow_head_size, arrow_height/2 - arrow_head_size)
-        ])
-        painter.setBrush(QBrush(Qt.black))
-        painter.drawPolygon(arrow_head)
-
-        # Draw connection lines
-        painter.setPen(QPen(Qt.black, 1.5))
-        painter.drawLine(0, -radius, 0, -height/2)
-        painter.drawLine(0, radius, 0, height/2)
-
-    def _draw_diode(self, painter, width, height):
-        """Draw a diode.
-
-        Args:
-            painter: QPainter object
-            width, height: Component dimensions
-        """
-        # Draw diode symbol
-        painter.setPen(QPen(Qt.black, 1.5))
-
-        # Triangle
-        triangle = QPolygonF([
-            QPointF(-10, -height/3),
-            QPointF(10, 0),
-            QPointF(-10, height/3)
-        ])
-        painter.setBrush(QBrush(Qt.white))
-        painter.drawPolygon(triangle)
-
-        # Line
-        painter.drawLine(10, -height/3, 10, height/3)
-
-        # Draw connection lines
-        painter.drawLine(-width/2, 0, -10, 0)
-        painter.drawLine(10, 0, width/2, 0)
-
-    def _draw_led(self, painter, width, height):
-        """Draw an LED.
-
-        Args:
-            painter: QPainter object
-            width, height: Component dimensions
-        """
-        # Draw diode symbol
-        painter.setPen(QPen(Qt.black, 1.5))
-
-        # Triangle
-        triangle = QPolygonF([
-            QPointF(-10, -height/3),
-            QPointF(10, 0),
-            QPointF(-10, height/3)
-        ])
-
-        # Use LED color if available
-        led_color = self.component.get_property("color", "red")
-        if self.component.state.get("brightness", 0.0) > 0.01:
-            # LED is lit, use color with brightness
-            brightness = self.component.state.get("brightness", 0.0)
-            color = QColor(led_color)
-            color.setAlphaF(0.3 + 0.7 * brightness)  # Vary transparency with brightness
-            painter.setBrush(QBrush(color))
-        else:
-            # LED is off, use white
-            painter.setBrush(QBrush(Qt.white))
-
-        painter.drawPolygon(triangle)
-
-        # Line
-        painter.drawLine(10, -height/3, 10, height/3)
-
-        # Draw arrows for light emission
-        if self.component.state.get("brightness", 0.0) > 0.01:
-            painter.setPen(QPen(QColor(led_color), 1, Qt.DashLine))
-            arrow_size = height/3 + self.component.state.get("brightness", 0.0) * height/3
-
-            # Draw two arrows
-            for angle in [30, 0, -30]:
-                rad = math.radians(angle)
-                dx = math.cos(rad) * arrow_size
-                dy = math.sin(rad) * arrow_size
-
-                # Arrow line
-                painter.drawLine(10, 0, 10 + dx, -dy)
-
-                # Arrow head
-                arrow_head = QPolygonF([
-                    QPointF(10 + dx, -dy),
-                    QPointF(10 + dx - arrow_size/6, -dy - arrow_size/6),
-                    QPointF(10 + dx - arrow_size/6, -dy + arrow_size/6)
-                ])
-                painter.setBrush(QBrush(QColor(led_color)))
-                painter.drawPolygon(arrow_head)
-
-        # Draw connection lines
-        painter.setPen(QPen(Qt.black, 1.5))
-        painter.drawLine(-width/2, 0, -10, 0)
-        painter.drawLine(10, 0, width/2, 0)
-
-    def _draw_bjt(self, painter, width, height):
-        """Draw a BJT transistor.
-
-        Args:
-            painter: QPainter object
-            width, height: Component dimensions
-        """
-        # Check if NPN or PNP
-        is_npn = self.component.get_property("type", "npn") == "npn"
-
-        # Draw transistor symbol
-        painter.setPen(QPen(Qt.black, 1.5))
-
-        # Draw circle
-        radius = min(width, height) / 2 - 10
-        painter.setBrush(QBrush(Qt.white))
-        painter.drawEllipse(QPointF(0, 0), radius, radius)
-
-        # Draw collector-emitter line
-        painter.drawLine(0, -radius * 0.7, 0, radius * 0.7)
-
-        # Draw base line
-        painter.drawLine(-radius * 0.7, 0, 0, 0)
-
-        # Draw emitter and collector leads with arrows
-        if is_npn:
-            # Emitter arrow points away from the line (NPN)
-            arrow = QPolygonF([
-                QPointF(0, radius * 0.5),
-                QPointF(radius * 0.3, radius * 0.7),
-                QPointF(radius * 0.1, radius * 0.9)
-            ])
-        else:
-            # Emitter arrow points toward the line (PNP)
-            arrow = QPolygonF([
-                QPointF(radius * 0.3, radius * 0.7),
-                QPointF(0, radius * 0.5),
-                QPointF(radius * 0.1, radius * 0.3)
-            ])
-
-        painter.setBrush(QBrush(Qt.black))
-        painter.drawPolygon(arrow)
-
-        # Draw connection lines
-        painter.drawLine(0, -radius, 0, -height/2)  # Collector
-        painter.drawLine(-radius, 0, -width/2, 0)   # Base
-        painter.drawLine(0, radius, 0, height/2)    # Emitter
-
-        # Draw labels
-        painter.setFont(QFont("Arial", 8))
-        painter.drawText(-5, -radius - 5, "C")
-        painter.drawText(-radius - 10, 5, "B")
-        painter.drawText(-5, radius + 15, "E")
-
-    def _draw_switch(self, painter, width, height):
-        """Draw a switch.
-
-        Args:
-            painter: QPainter object
-            width, height: Component dimensions
-        """
-        # Draw switch symbol
-        painter.setPen(QPen(Qt.black, 1.5))
-
-        # Get switch state
-        closed = self.component.state.get("closed", False)
-
-        # Draw connection dots
-        painter.setBrush(QBrush(Qt.black))
-        painter.drawEllipse(-width/3, -height/4, height/2, height/2)
-        painter.drawEllipse(width/3, -height/4, height/2, height/2)
-
-        # Draw switch arm
-        painter.setPen(QPen(Qt.black, 2))
-        if closed:
-            # Closed switch - straight line
-            painter.drawLine(-width/3 + height/4, 0, width/3 + height/4, 0)
-        else:
-            # Open switch - angled line
-            painter.drawLine(-width/3 + height/4, 0, width/3, -height * 0.4)
-
-        # Draw connection lines
-        painter.setPen(QPen(Qt.black, 1.5))
-        painter.drawLine(-width/2, 0, -width/3, 0)
-        painter.drawLine(width/3 + height/2, 0, width/2, 0)
-
-    def _draw_connections(self, painter):
-        """Draw component connection points.
-
-        Args:
-            painter: QPainter object
-        """
-        grid_size = self.board.grid_size
-
-        painter.setPen(QPen(Qt.black, 1))
-        painter.setBrush(QBrush(Qt.white))
-
-        for name, offset in self.component.connections.items():
-            x, y = offset
-            pos_x = x * grid_size
-            pos_y = y * grid_size
-
-            # Draw connection point
-            painter.drawEllipse(pos_x - self.connection_radius,
-                               pos_y - self.connection_radius,
-                               self.connection_radius * 2,
-                               self.connection_radius * 2)
-
-            # If this connection is connected to another component,
-            # fill the circle to indicate connection
-            if self.component.is_connected(name):
-                painter.setBrush(QBrush(Qt.black))
-                painter.drawEllipse(pos_x - self.connection_radius/2,
-                                   pos_y - self.connection_radius/2,
-                                   self.connection_radius,
-                                   self.connection_radius)
-                painter.setBrush(QBrush(Qt.white))  # Reset brush
-
-    def _draw_values(self, painter, width, height):
-        """Draw component values (voltage, current, etc.).
-
-        Args:
-            painter: QPainter object
-            width, height: Component dimensions
-        """
-        if not self.board.show_values:
-            return
-
-        grid_size = self.board.grid_size
-        component_type = self.component.__class__.__name__
-
-        # Set up text rendering
-        painter.setPen(QPen(Qt.black, 1))
-        painter.setFont(QFont("Arial", 8))
-
-        # Position for values
-        text_y = height/2 + 15
-
-        # Show different values based on component type
-        if component_type == 'Resistor':
-            resistance = self.component.get_property('resistance', config.DEFAULT_RESISTANCE)
-            power = self.component.state.get('power', 0.0)
-
-            if resistance >= 1e6:
-                r_text = f"{resistance/1e6:.1f} MΩ"
-            elif resistance >= 1e3:
-                r_text = f"{resistance/1e3:.1f} kΩ"
-            else:
-                r_text = f"{resistance:.1f} Ω"
-
-            if power >= 1:
-                p_text = f"{power:.2f} W"
-            elif power >= 1e-3:
-                p_text = f"{power*1e3:.2f} mW"
-            else:
-                p_text = f"{power*1e6:.2f} µW"
-
-            painter.drawText(QRectF(-width/2, text_y, width, 20),
-                            Qt.AlignCenter, f"{r_text}, {p_text}")
-
-        elif component_type in ['Capacitor', 'Inductor']:
-            # Get the property name based on component type
-            if component_type == 'Capacitor':
-                prop_name = 'capacitance'
-                default_val = config.DEFAULT_CAPACITANCE
-                unit = 'F'
-            else:  # Inductor
-                prop_name = 'inductance'
-                default_val = config.DEFAULT_INDUCTANCE
-                unit = 'H'
-
-            value = self.component.get_property(prop_name, default_val)
-
-            # Format with appropriate prefix
-            if value >= 1:
-                v_text = f"{value:.1f} {unit}"
-            elif value >= 1e-3:
-                v_text = f"{value*1e3:.1f} m{unit}"
-            elif value >= 1e-6:
-                v_text = f"{value*1e6:.1f} µ{unit}"
-            elif value >= 1e-9:
-                v_text = f"{value*1e9:.1f} n{unit}"
-            else:
-                v_text = f"{value*1e12:.1f} p{unit}"
-
-            painter.drawText(QRectF(-width/2, text_y, width, 20),
-                            Qt.AlignCenter, v_text)
-
-        elif component_type in ['DCVoltageSource', 'ACVoltageSource']:
-            # Get voltage
-            if component_type == 'DCVoltageSource':
-                voltage = self.component.get_property('voltage', config.DEFAULT_VOLTAGE)
-                v_text = f"{voltage:.1f} V"
-            else:  # ACVoltageSource
-                amplitude = self.component.get_property('amplitude', config.DEFAULT_VOLTAGE)
-                frequency = self.component.get_property('frequency', config.DEFAULT_FREQUENCY)
-
-                if frequency >= 1e6:
-                    f_text = f"{frequency/1e6:.1f} MHz"
-                elif frequency >= 1e3:
-                    f_text = f"{frequency/1e3:.1f} kHz"
-                else:
-                    f_text = f"{frequency:.1f} Hz"
-
-                v_text = f"{amplitude:.1f} V, {f_text}"
-
-            painter.drawText(QRectF(-width/2, text_y, width, 20),
-                            Qt.AlignCenter, v_text)
-
-        elif component_type == 'DCCurrentSource':
-            current = self.component.get_property('current', config.DEFAULT_CURRENT)
-
-            if abs(current) >= 1:
-                i_text = f"{current:.1f} A"
-            elif abs(current) >= 1e-3:
-                i_text = f"{current*1e3:.1f} mA"
-            else:
-                i_text = f"{current*1e6:.1f} µA"
-
-            painter.drawText(QRectF(-width/2, text_y, width, 20),
-                            Qt.AlignCenter, i_text)
-
-        elif component_type in ['Diode', 'LED']:
-            # Show forward voltage and current
-            vf = self.component.get_property('forward_voltage', 0.7)
-            current = self.component.state.get('currents', {}).get('anode', 0.0)
-
-            if abs(current) >= 1:
-                i_text = f"{current:.1f} A"
-            elif abs(current) >= 1e-3:
-                i_text = f"{current*1e3:.1f} mA"
-            else:
-                i_text = f"{current*1e6:.1f} µA"
-
-            v_text = f"Vf={vf:.1f}V, {i_text}"
-
-            painter.drawText(QRectF(-width/2, text_y, width, 20),
-                            Qt.AlignCenter, v_text)
-
-        elif component_type == 'BJT':
-            # Show gain
-            gain = self.component.get_property('gain', 100)
-            region = self.component.state.get('region', 'cutoff')
-
-            gain_text = f"β={gain}, {region}"
-
-            painter.drawText(QRectF(-width/2, text_y, width, 20),
-                            Qt.AlignCenter, gain_text)
-
-    def _draw_debug_info(self, painter):
-        """Draw debug information.
-
-        Args:
-            painter: QPainter object
-        """
-        # Set up text rendering
-        painter.setPen(QPen(Qt.darkGray, 1))
-        painter.setFont(QFont("Courier", 7))
-
-        # Draw component ID
-        painter.drawText(-50, -30, f"ID: {self.component.id[:8]}")
-
-        # Draw position and rotation
-        pos = self.component.position
-        rot = self.component.rotation
-        painter.drawText(-50, -20, f"Pos: ({pos[0]}, {pos[1]}), Rot: {rot}°")
-
-        # Draw connections
-        conn_str = ", ".join(f"{k}" for k in self.component.connections.keys())
-        painter.drawText(-50, -10, f"Conn: {conn_str}")
-
-    def update_position(self):
-        """Update the position and rotation from the component model."""
-        grid_size = self.board.grid_size
-
-        # Convert grid coordinates to scene coordinates
-        x = self.component.position[0] * grid_size
-        y = self.component.position[1] * grid_size
-
-        # Set the position
-        self.setPos(x, y)
-
-        # Set the rotation
-        self.setRotation(self.component.rotation)
-
-
-
-    def mouseDoubleClickEvent(self, event):
-        """Handle mouse double-click events.
-
-        Args:
-            event: QGraphicsSceneMouseEvent
-        """
-        # Toggle switch state if this is a switch
-        if self.component.__class__.__name__ == 'Switch':
-            self.component.toggle()
-
-            # Record the change for undo
-            self.board._add_to_undo_stack(
-                "toggle_switch",
-                component_id=self.component.id,
-                old_state=not self.component.state['closed'],
-                new_state=self.component.state['closed']
-            )
-
-            # Mark changes
-            self.board.set_unsaved_changes(True)
-
-            # Update the component
-            self.update()
-
-            # Accept the event
-            event.accept()
-            return
-
-        # Edit component properties
-        self.board._show_component_properties(self.component)
-
-        # Accept the event
-        event.accept()
-
-    def _get_connection_at(self, pos):
-        """Get the connection name at the given position.
-
-        Args:
-            pos: Position in item coordinates
-
-        Returns:
-            Connection name or None if no connection at the position
-        """
-        grid_size = self.board.grid_size
-
-        for name, offset in self.component.connections.items():
-            x, y = offset
-            conn_x = x * grid_size
-            conn_y = y * grid_size
-
-            # Check if the position is within the connection circle
-            distance = math.sqrt((pos.x() - conn_x)**2 + (pos.y() - conn_y)**2)
-            if distance <= self.connection_radius:
-                return name
-
-        return None
-
-    def _get_connection_pos(self, connection_name):
-        """Get the position of a connection point.
-
-        Args:
-            connection_name: Connection name
-
-        Returns:
-            QPointF position in item coordinates
-        """
-        grid_size = self.board.grid_size
-
-        if connection_name in self.component.connections:
-            x, y = self.component.connections[connection_name]
-            return QPointF(x * grid_size, y * grid_size)
-
-        return QPointF(0, 0)
-
-    def itemChange(self, change, value):
-        """Handle item change events.
-
-        Args:
-            change: GraphicsItemChange type
-            value: Value of the change
-
-        Returns:
-            Adjusted value
-        """
-        if change == QGraphicsItem.ItemSelectedChange:
-            # Update selected state
-            self.selected = bool(value)
-
-        return super().itemChange(change, value)
