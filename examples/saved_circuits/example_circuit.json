@@ -1,0 +1,113 @@
+{
+  "components": {
+    "dc_source_1": {
+      "id": "dc_source_1",
+      "component_id": null,
+      "position": [5, 5],
+      "rotation": 0,
+      "properties": {
+        "voltage": 5.0,
+        "max_current": 1.0
+      },
+      "connected_to": {
+        "pos": ["resistor_1", "p1"],
+        "neg": ["ground_1", "gnd"]
+      },
+      "size": [2, 3],
+      "state": {
+        "voltages": {
+          "pos": 5.0,
+          "neg": 0.0
+        },
+        "currents": {
+          "pos": 0.013636363636363636,
+          "neg": -0.013636363636363636
+        },
+        "power": 0.06818181818181818
+      }
+    },
+    "resistor_1": {
+      "id": "resistor_1",
+      "component_id": null,
+      "position": [8, 5],
+      "rotation": 0,
+      "properties": {
+        "resistance": 220.0,
+        "max_power": 0.25
+      },
+      "connected_to": {
+        "p1": ["dc_source_1", "pos"],
+        "p2": ["led_1", "anode"]
+      },
+      "size": [3, 1],
+      "state": {
+        "voltages": {
+          "p1": 5.0,
+          "p2": 2.0
+        },
+        "currents": {
+          "p1": 0.013636363636363636,
+          "p2": -0.013636363636363636
+        },
+        "power": 0.04090909090909091,
+        "temperature": 33.18181818181818
+      }
+    },
+    "led_1": {
+      "id": "led_1",
+      "component_id": null,
+      "position": [11, 5],
+      "rotation": 0,
+      "properties": {
+        "forward_voltage": 2.0,
+        "color": "red",
+        "max_current": 0.02
+      },
+      "connected_to": {
+        "anode": ["resistor_1", "p2"],
+        "cathode": ["ground_1", "gnd"]
+      },
+      "size": [2, 1],
+      "state": {
+        "voltages": {
+          "anode": 2.0,
+          "cathode": 0.0
+        },
+        "currents": {
+          "anode": 0.013636363636363636,
+          "cathode": -0.013636363636363636
+        },
+        "power": 0.02727272727272727,
+        "conducting": true,
+        "brightness": 0.6818181818181818
+      }
+    },
+    "ground_1": {
+      "id": "ground_1",
+      "component_id": null,
+      "position": [14, 7],
+      "rotation": 0,
+      "properties": {},
+      "connected_to": {
+        "gnd": ["led_1", "cathode"]
+      },
+      "size": [1, 2],
+      "state": {
+        "voltages": {
+          "gnd": 0.0
+        },
+        "currents": {
+          "gnd": 0.013636363636363636
+        }
+      }
+    }
+  },
+  "simulation_time": 0.0,
+  "time_step": 0.001,
+  "ground_node": "node_14_7",
+  "metadata": {
+    "version": "1.0",
+    "created": "2025-04-25T12:00:00",
+    "description": "A simple LED circuit with a current-limiting resistor"
+  }
+}

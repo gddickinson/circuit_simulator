@@ -1,0 +1,3 @@
+"""
+Circuit Simulator - Resources Package
+"""
