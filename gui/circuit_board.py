@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QWidget, QMenu, QAction, QGraphicsView, QGraphicsScene,
     QGraphicsItem, QGraphicsPixmapItem, QGraphicsLineItem,
     QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsTextItem,
-    QSizePolicy
+    QSizePolicy, QGraphicsPathItem
 )
 from PyQt5.QtCore import (
     Qt, QPointF, QRectF, QLineF, QTimer, pyqtSignal, QSize, QBuffer, QEvent
@@ -58,7 +58,7 @@ class ComponentGraphicsItem(QGraphicsItem):
         self.board = board
         self.selected = False
         self.highlighted = False
-        self.connection_radius = 5  # Radius of connection points
+        self.connection_radius = 8  # Radius of connection points
 
         # Visual properties
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
@@ -601,13 +601,42 @@ class ComponentGraphicsItem(QGraphicsItem):
             # If this connection is connected to another component,
             # fill the circle to indicate connection
             if self.component.is_connected(name):
-                painter.setBrush(QBrush(Qt.black))
-                painter.drawEllipse(QRectF(
-                    pos_x - self.connection_radius/2,
-                    pos_y - self.connection_radius/2,
-                    self.connection_radius,
-                    self.connection_radius
-                ))
+                # Get number of connections at this point
+                num_connections = len(self.component.connected_to.get(name, []))
+
+                # Fill differently based on number of connections
+                if num_connections == 1:
+                    # Single connection - fill center with black
+                    painter.setBrush(QBrush(Qt.black))
+                    painter.drawEllipse(QRectF(
+                        pos_x - self.connection_radius/2,
+                        pos_y - self.connection_radius/2,
+                        self.connection_radius,
+                        self.connection_radius
+                    ))
+                else:
+                    # Multiple connections - fill with blue
+                    painter.setBrush(QBrush(QColor(0, 128, 255)))
+                    painter.drawEllipse(QRectF(
+                        pos_x - self.connection_radius/2,
+                        pos_y - self.connection_radius/2,
+                        self.connection_radius,
+                        self.connection_radius
+                    ))
+
+                    # Draw a small label with the connection count
+                    painter.setPen(QPen(Qt.white))
+                    painter.setFont(QFont("Arial", 6))
+                    painter.drawText(QRectF(
+                        pos_x - self.connection_radius,
+                        pos_y - self.connection_radius,
+                        self.connection_radius * 2,
+                        self.connection_radius * 2
+                    ), Qt.AlignCenter, str(num_connections))
+
+                    # Reset pen color
+                    painter.setPen(QPen(Qt.black, 1))
+
                 painter.setBrush(QBrush(Qt.white))  # Reset brush
 
     def draw_values(self, painter, width, height):
@@ -930,7 +959,7 @@ class ComponentGraphicsItem(QGraphicsItem):
 
             # Check if the position is within the connection circle
             distance = math.sqrt((pos.x() - conn_x)**2 + (pos.y() - conn_y)**2)
-            if distance <= self.connection_radius:
+            if distance <= self.connection_radius *1.5:
                 return name
 
         return None
@@ -969,10 +998,10 @@ class ComponentGraphicsItem(QGraphicsItem):
         return super().itemChange(change, value)
 
 
-class WireGraphicsItem(QGraphicsItem):
+class WireGraphicsItem(QGraphicsPathItem):  # Change this from QGraphicsItem to QGraphicsPathItem
     """Graphics item for a wire connection between components."""
 
-    def __init__(self, start_component, start_connection, end_component, end_connection, board):
+    def __init__(self, start_component, start_connection, end_component, end_connection, board, offset=0):
         """Initialize a wire graphics item.
 
         Args:
@@ -981,6 +1010,7 @@ class WireGraphicsItem(QGraphicsItem):
             end_component: End component object
             end_connection: End connection name
             board: CircuitBoardWidget
+            offset: Optional offset for multiple wires between the same points
         """
         super().__init__()
 
@@ -989,6 +1019,7 @@ class WireGraphicsItem(QGraphicsItem):
         self.end_component = end_component
         self.end_connection = end_connection
         self.board = board
+        self.offset = offset  # Offset for multiple wires between the same connections
 
         self.selected = False
         self.highlighted = False
@@ -999,9 +1030,17 @@ class WireGraphicsItem(QGraphicsItem):
         # Set Z-value (wires are above components)
         self.setZValue(5)
 
-        # Calculate endpoints
+        # Calculate endpoints and create the path
         self.start_pos = self._get_start_pos()
         self.end_pos = self._get_end_pos()
+
+        # Log wire creation
+        logger.info(f"Creating wire: {start_component.id}.{start_connection} to {end_component.id}.{end_connection}")
+        logger.info(f"Start pos: {self.start_pos}, End pos: {self.end_pos}")
+
+        # Create the path
+        self.update_path()
+
 
     def boundingRect(self):
         """Get the bounding rectangle of the wire.
@@ -1073,6 +1112,9 @@ class WireGraphicsItem(QGraphicsItem):
         self.start_pos = self._get_start_pos()
         self.end_pos = self._get_end_pos()
 
+        # Log the wire positions in paint
+        logger.debug(f"Painting wire from {self.start_pos} to {self.end_pos}")
+
         # Determine wire color and style based on state
         color = QColor(config.WIRE_COLOR)
         pen_width = config.WIRE_THICKNESS
@@ -1090,26 +1132,68 @@ class WireGraphicsItem(QGraphicsItem):
         pen = QPen(color, pen_width)
         painter.setPen(pen)
 
-        # Draw the wire
-        if self.start_pos.x() == self.end_pos.x() or self.start_pos.y() == self.end_pos.y():
-            # Straight wire
-            painter.drawLine(self.start_pos, self.end_pos)
-        else:
-            # Angled wire with right angle
-            # Determine which direction to go first (horizontal or vertical)
+        # Apply offset for multiple wires (using a curved path)
+        if self.offset != 0:
+            # Offset the wire using a Bezier curve
+            path = QPainterPath()
+            path.moveTo(self.start_pos)
+
+            # Calculate control points for curve
             dx = self.end_pos.x() - self.start_pos.x()
             dy = self.end_pos.y() - self.start_pos.y()
+            distance = math.sqrt(dx*dx + dy*dy)
 
+            # Determine direction vector perpendicular to wire
             if abs(dx) > abs(dy):
-                # Go horizontal first
-                mid_point = QPointF(self.end_pos.x(), self.start_pos.y())
+                # More horizontal wire, offset vertically
+                norm_x, norm_y = 0, 1
             else:
-                # Go vertical first
-                mid_point = QPointF(self.start_pos.x(), self.end_pos.y())
+                # More vertical wire, offset horizontally
+                norm_x, norm_y = 1, 0
 
-            # Draw the two segments
-            painter.drawLine(self.start_pos, mid_point)
-            painter.drawLine(mid_point, self.end_pos)
+            # Scale offset based on number of connections
+            offset_amount = self.offset * 10
+
+            # Calculate control points
+            ctrl1_x = self.start_pos.x() + dx/3 + norm_x * offset_amount
+            ctrl1_y = self.start_pos.y() + dy/3 + norm_y * offset_amount
+            ctrl2_x = self.start_pos.x() + 2*dx/3 + norm_x * offset_amount
+            ctrl2_y = self.start_pos.y() + 2*dy/3 + norm_y * offset_amount
+
+            # Draw cubic Bezier curve
+            path.cubicTo(
+                QPointF(ctrl1_x, ctrl1_y),
+                QPointF(ctrl2_x, ctrl2_y),
+                self.end_pos
+            )
+
+            painter.drawPath(path)
+        else:
+            # Standard wire drawing for offset = 0
+            if self.start_pos.x() == self.end_pos.x() or self.start_pos.y() == self.end_pos.y():
+                # Straight wire
+                painter.drawLine(self.start_pos, self.end_pos)
+            else:
+                # Angled wire with right angle
+                # Determine which direction to go first (horizontal or vertical)
+                dx = self.end_pos.x() - self.start_pos.x()
+                dy = self.end_pos.y() - self.start_pos.y()
+
+                if abs(dx) > abs(dy):
+                    # Go horizontal first
+                    mid_point = QPointF(self.end_pos.x(), self.start_pos.y())
+                else:
+                    # Go vertical first
+                    mid_point = QPointF(self.start_pos.x(), self.end_pos.y())
+
+                # Draw the two segments
+                painter.drawLine(self.start_pos, mid_point)
+                painter.drawLine(mid_point, self.end_pos)
+
+    def _draw_wire_path(self, painter):
+        """Draw the wire path based on the offset."""
+        # Get the path that was created in update_path
+        painter.drawPath(self.path())
 
     def _get_start_pos(self):
         """Get the starting position of the wire.
@@ -1201,6 +1285,73 @@ class WireGraphicsItem(QGraphicsItem):
 
         return super().itemChange(change, value)
 
+    def update_path(self):
+        """Update the wire path based on start and end positions."""
+        path = QPainterPath()
+        path.moveTo(self.start_pos)
+
+        # Calculate the path based on offset
+        dx = self.end_pos.x() - self.start_pos.x()
+        dy = self.end_pos.y() - self.start_pos.y()
+        distance = math.sqrt(dx*dx + dy*dy)
+
+        if self.offset != 0:
+            # Use offset for multiple connections
+            # Determine offset direction perpendicular to wire
+            if abs(dx) > abs(dy):
+                # More horizontal wire, offset vertically
+                norm_x, norm_y = 0, 1
+            else:
+                # More vertical wire, offset horizontally
+                norm_x, norm_y = 1, 0
+
+            # Scale offset based on number of connections
+            offset_amount = self.offset * 5  # Smaller offset to avoid overlap
+
+            # Calculate control points with offset
+            ctrl1_x = self.start_pos.x() + dx/3 + norm_x * offset_amount
+            ctrl1_y = self.start_pos.y() + dy/3 + norm_y * offset_amount
+            ctrl2_x = self.start_pos.x() + 2*dx/3 + norm_x * offset_amount
+            ctrl2_y = self.start_pos.y() + 2*dy/3 + norm_y * offset_amount
+
+            # Draw cubic Bezier curve
+            path.cubicTo(
+                QPointF(ctrl1_x, ctrl1_y),
+                QPointF(ctrl2_x, ctrl2_y),
+                self.end_pos
+            )
+        else:
+            # For straight connections with no offset
+            if abs(dx) < 1e-6 or abs(dy) < 1e-6:  # Nearly straight line
+                # Straight wire
+                path.lineTo(self.end_pos)
+            else:
+                # Use right-angled connections
+                # Determine which direction to go first
+                if abs(dx) > abs(dy):
+                    # Go horizontal first
+                    mid_point = QPointF(self.end_pos.x(), self.start_pos.y())
+                else:
+                    # Go vertical first
+                    mid_point = QPointF(self.start_pos.x(), self.end_pos.y())
+
+                path.lineTo(mid_point)
+                path.lineTo(self.end_pos)
+
+        # Set the path to this QGraphicsPathItem
+        self.setPath(path)
+
+    def update(self):
+        """Update the wire's position and appearance."""
+        # Update the endpoints
+        self.start_pos = self._get_start_pos()
+        self.end_pos = self._get_end_pos()
+
+        # Update the path
+        self.update_path()
+
+        # Call the parent update method
+        super().update()
 
 class CircuitBoardWidget(QGraphicsView):
     """Interactive circuit board widget where components are placed and connected."""
@@ -1257,6 +1408,10 @@ class CircuitBoardWidget(QGraphicsView):
         # Component items
         self.component_items = {}  # Dictionary of {component_id: ComponentGraphicsItem}
         self.wire_items = []       # List of WireGraphicsItem
+        self.wire_symbols = []
+
+        # Initialize wire_symbols to same list for compatibility
+        self.wire_symbols = self.wire_items  # Point to the same list
 
         # Undo/redo stacks
         self.undo_stack = []
@@ -1433,6 +1588,9 @@ class CircuitBoardWidget(QGraphicsView):
         for wire in self.wire_items:
             wire.update()
 
+        # Create/update wires between connected components
+        self._create_wires()
+
         # Update the scene
         self.scene.update()
 
@@ -1499,11 +1657,23 @@ class CircuitBoardWidget(QGraphicsView):
         Returns:
             WireGraphicsItem
         """
+        # Calculate offset for multiple wires between same components
+        offset = 0
+        for existing_wire in self.wire_items:
+            if ((existing_wire.start_component.id == start_component.id and
+                 existing_wire.end_component.id == end_component.id) or
+                (existing_wire.start_component.id == end_component.id and
+                 existing_wire.end_component.id == start_component.id)):
+                offset += 1
+
+        # Log the offset calculation
+        logger.info(f"Creating wire with offset {offset}")
+
         # Create a wire graphics item
         wire = WireGraphicsItem(
             start_component, start_connection,
             end_component, end_connection,
-            self
+            self, offset
         )
 
         # Add it to the scene
@@ -1511,12 +1681,6 @@ class CircuitBoardWidget(QGraphicsView):
 
         # Store it
         self.wire_items.append(wire)
-
-        # Connect the components in the simulator
-        self.simulator.connect_components_at(
-            start_component.id, start_connection,
-            end_component.id, end_connection
-        )
 
         return wire
 
@@ -1550,34 +1714,6 @@ class CircuitBoardWidget(QGraphicsView):
 
         return False
 
-    def _delete_wire(self, wire):
-        """Delete a wire and add to the undo stack.
-
-        Args:
-            wire: WireGraphicsItem
-
-        Returns:
-            True if deleted, False if not found
-        """
-        if wire in self.wire_items:
-            # Add to undo stack
-            self._add_to_undo_stack(
-                "delete_wire",
-                start_component_id=wire.start_component.id,
-                start_connection=wire.start_connection,
-                end_component_id=wire.end_component.id,
-                end_connection=wire.end_connection
-            )
-
-            # Remove the wire
-            result = self._remove_wire(wire)
-
-            # Mark changes
-            self.set_unsaved_changes(True)
-
-            return result
-
-        return False
 
     def _update_connected_wires(self, component):
         """Update all wires connected to a component.
@@ -1603,12 +1739,14 @@ class CircuitBoardWidget(QGraphicsView):
         self.connection_start_point = connection_name
 
         # Create a temporary line for the connection
-        start_pos = self._get_component_item(component.id).mapToScene(
-            self._get_component_item(component.id)._get_connection_pos(connection_name)
-        )
-        self.connection_line = QGraphicsLineItem(start_pos.x(), start_pos.y(), start_pos.x(), start_pos.y())
-        self.connection_line.setPen(QPen(QColor(config.SELECTED_COLOR), 2, Qt.DashLine))
-        self.scene.addItem(self.connection_line)
+        comp_item = self._get_component_item(component.id)
+        if comp_item:
+            start_pos = comp_item.mapToScene(
+                comp_item._get_connection_pos(connection_name)
+            )
+            self.connection_line = QGraphicsLineItem(start_pos.x(), start_pos.y(), start_pos.x(), start_pos.y())
+            self.connection_line.setPen(QPen(QColor(config.SELECTED_COLOR), 2, Qt.DashLine))
+            self.scene.addItem(self.connection_line)
 
     def _update_connection(self, start_pos, end_pos):
         """Update the temporary connection line.
@@ -1620,50 +1758,7 @@ class CircuitBoardWidget(QGraphicsView):
         if self.connection_line:
             self.connection_line.setLine(start_pos.x(), start_pos.y(), end_pos.x(), end_pos.y())
 
-    def _finish_connection(self, end_component, end_connection):
-        """Finish creating a connection.
 
-        Args:
-            end_component: Target component
-            end_connection: Target connection name
-
-        Returns:
-            True if connection was successful, False otherwise
-        """
-        if not self.creating_connection or not self.connection_start_component:
-            return False
-
-        # Check if the connection is valid
-        if end_component.id == self.connection_start_component.id:
-            # Can't connect a component to itself
-            return False
-
-        # Check if either connection is already connected
-        if self.connection_start_component.is_connected(self.connection_start_point):
-            return False
-
-        if end_component.is_connected(end_connection):
-            return False
-
-        # Add a wire between the components
-        wire = self._add_wire(
-            self.connection_start_component, self.connection_start_point,
-            end_component, end_connection
-        )
-
-        # Add to undo stack
-        self._add_to_undo_stack(
-            "add_wire",
-            start_component_id=self.connection_start_component.id,
-            start_connection=self.connection_start_point,
-            end_component_id=end_component.id,
-            end_connection=end_connection
-        )
-
-        # Mark changes
-        self.set_unsaved_changes(True)
-
-        return True
 
     def _cancel_connection(self):
         """Cancel the current connection creation."""
@@ -1945,70 +2040,6 @@ class CircuitBoardWidget(QGraphicsView):
             # Handle board-level double click
             super().mouseDoubleClickEvent(event)
 
-    def _show_context_menu(self, pos):
-        """Show the context menu.
-
-        Args:
-            pos: Position in view coordinates
-        """
-        # Convert position to scene coordinates
-        scene_pos = self.mapToScene(pos)
-
-        # Check if there are any items at this position
-        items = self.scene.items(scene_pos)
-
-        # Create menu
-        menu = QMenu(self)
-
-        if items:
-            # Find the top-most item (highest Z-value)
-            item = None
-            for i in items:
-                if isinstance(i, ComponentGraphicsItem) or isinstance(i, WireGraphicsItem):
-                    item = i
-                    break
-
-            if item:
-                # Item-specific actions
-                if isinstance(item, ComponentGraphicsItem):
-                    # Component actions
-                    component = item.component
-
-                    # Rotate action
-                    rotate_action = QAction("Rotate 90° Clockwise", self)
-                    rotate_action.triggered.connect(lambda: self._rotate_component(component, 90))
-                    menu.addAction(rotate_action)
-
-                    # Delete action
-                    delete_action = QAction("Delete Component", self)
-                    delete_action.triggered.connect(lambda: self.delete_component(component.id))
-                    menu.addAction(delete_action)
-
-                    # Properties action
-                    props_action = QAction("Properties...", self)
-                    props_action.triggered.connect(lambda: self._show_component_properties(component))
-                    menu.addAction(props_action)
-
-                    # If this is a switch, add toggle action
-                    if component.__class__.__name__ == 'Switch':
-                        toggle_action = QAction("Toggle Switch", self)
-                        toggle_action.triggered.connect(lambda: self._toggle_switch(component))
-                        menu.addAction(toggle_action)
-
-                elif isinstance(item, WireGraphicsItem):
-                    # Wire actions
-                    delete_action = QAction("Delete Wire", self)
-                    delete_action.triggered.connect(lambda: self._delete_wire(item))
-                    menu.addAction(delete_action)
-        else:
-            # General actions
-            paste_action = QAction("Paste", self)
-            paste_action.triggered.connect(self.paste)
-            paste_action.setEnabled(len(self.clipboard) > 0)
-            menu.addAction(paste_action)
-
-        # Show the menu
-        menu.exec_(self.mapToGlobal(pos))
 
     def _toggle_switch(self, component):
         """Toggle a switch component.
@@ -2055,273 +2086,7 @@ class CircuitBoardWidget(QGraphicsView):
             'params': kwargs
         })
 
-    def undo(self):
-        """Undo the last action."""
-        if not self.undo_stack:
-            return
 
-        # Get the last action
-        action = self.undo_stack.pop()
-
-        # Add to redo stack
-        self.redo_stack.append(action)
-
-        # Perform the undo based on action type
-        action_type = action['action']
-        params = action['params']
-
-        if action_type == "add_component":
-            # Undo add component by removing it
-            component_id = params['component_id']
-            self.delete_component(component_id, add_to_undo=False)
-
-        elif action_type == "delete_component":
-            # Undo delete component by adding it back
-            component_type = params['component_type']
-            properties = params['properties']
-            position = params['position']
-            rotation = params['rotation']
-            component_id = params['component_id']
-
-            # Create the component
-            component = self._create_component(component_type, properties)
-            if component:
-                # Set the same ID
-                component.id = component_id
-
-                # Set position and rotation
-                component.position = position
-                component.set_rotation(rotation)
-
-                # Add to simulator
-                self.simulator.add_component(component)
-
-                # Add graphics item
-                self._add_component_item(component)
-
-        elif action_type == "move_component":
-            # Undo move component by moving it back
-            component_id = params['component_id']
-            old_position = params['old_position']
-
-            component = self.simulator.get_component(component_id)
-            if component:
-                # Set the original position
-                component.position = old_position
-
-                # Update the component item
-                component_item = self._get_component_item(component_id)
-                if component_item:
-                    component_item.update_position()
-
-                # Update connected wires
-                self._update_connected_wires(component)
-
-        elif action_type == "rotate_component":
-            # Undo rotate component by rotating it back
-            component_id = params['component_id']
-            old_rotation = params['old_rotation']
-
-            component = self.simulator.get_component(component_id)
-            if component:
-                # Set the original rotation
-                component.set_rotation(old_rotation)
-
-                # Update the component item
-                component_item = self._get_component_item(component_id)
-                if component_item:
-                    component_item.update_position()
-
-                # Update connected wires
-                self._update_connected_wires(component)
-
-        elif action_type == "add_wire":
-            # Undo add wire by removing it
-            start_component_id = params['start_component_id']
-            start_connection = params['start_connection']
-            end_component_id = params['end_component_id']
-            end_connection = params['end_connection']
-
-            # Find the wire
-            for wire in self.wire_items[:]:
-                if (wire.start_component.id == start_component_id and
-                    wire.start_connection == start_connection and
-                    wire.end_component.id == end_component_id and
-                    wire.end_connection == end_connection):
-                    # Remove the wire
-                    self._remove_wire(wire)
-                    break
-
-        elif action_type == "delete_wire":
-            # Undo delete wire by adding it back
-            start_component_id = params['start_component_id']
-            start_connection = params['start_connection']
-            end_component_id = params['end_component_id']
-            end_connection = params['end_connection']
-
-            # Get the components
-            start_component = self.simulator.get_component(start_component_id)
-            end_component = self.simulator.get_component(end_component_id)
-
-            if start_component and end_component:
-                # Add the wire
-                self._add_wire(
-                    start_component, start_connection,
-                    end_component, end_connection
-                )
-
-        elif action_type == "toggle_switch":
-            # Undo toggle switch by toggling it back
-            component_id = params['component_id']
-            old_state = params['old_state']
-
-            component = self.simulator.get_component(component_id)
-            if component and component.__class__.__name__ == 'Switch':
-                # Set the original state
-                component.set_property('state', old_state)
-                component.state['closed'] = old_state
-
-                # Update the component item
-                component_item = self._get_component_item(component_id)
-                if component_item:
-                    component_item.update()
-
-        # Mark changes
-        self.set_unsaved_changes(True)
-
-    def redo(self):
-        """Redo the last undone action."""
-        if not self.redo_stack:
-            return
-
-        # Get the last undone action
-        action = self.redo_stack.pop()
-
-        # Add to undo stack
-        self.undo_stack.append(action)
-
-        # Perform the redo based on action type
-        action_type = action['action']
-        params = action['params']
-
-        if action_type == "add_component":
-            # Redo add component
-            component_type = params['component_type']
-            properties = params['properties']
-            position = params['position']
-            rotation = params['rotation']
-            component_id = params['component_id']
-
-            # Create the component
-            component = self._create_component(component_type, properties)
-            if component:
-                # Set the same ID
-                component.id = component_id
-
-                # Set position and rotation
-                component.position = position
-                component.set_rotation(rotation)
-
-                # Add to simulator
-                self.simulator.add_component(component)
-
-                # Add graphics item
-                self._add_component_item(component)
-
-        elif action_type == "delete_component":
-            # Redo delete component
-            component_id = params['component_id']
-            self.delete_component(component_id, add_to_undo=False)
-
-        elif action_type == "move_component":
-            # Redo move component
-            component_id = params['component_id']
-            new_position = params['new_position']
-
-            component = self.simulator.get_component(component_id)
-            if component:
-                # Set the new position
-                component.position = new_position
-
-                # Update the component item
-                component_item = self._get_component_item(component_id)
-                if component_item:
-                    component_item.update_position()
-
-                # Update connected wires
-                self._update_connected_wires(component)
-
-        elif action_type == "rotate_component":
-            # Redo rotate component
-            component_id = params['component_id']
-            new_rotation = params['new_rotation']
-
-            component = self.simulator.get_component(component_id)
-            if component:
-                # Set the new rotation
-                component.set_rotation(new_rotation)
-
-                # Update the component item
-                component_item = self._get_component_item(component_id)
-                if component_item:
-                    component_item.update_position()
-
-                # Update connected wires
-                self._update_connected_wires(component)
-
-        elif action_type == "add_wire":
-            # Redo add wire
-            start_component_id = params['start_component_id']
-            start_connection = params['start_connection']
-            end_component_id = params['end_component_id']
-            end_connection = params['end_connection']
-
-            # Get the components
-            start_component = self.simulator.get_component(start_component_id)
-            end_component = self.simulator.get_component(end_component_id)
-
-            if start_component and end_component:
-                # Add the wire
-                self._add_wire(
-                    start_component, start_connection,
-                    end_component, end_connection
-                )
-
-        elif action_type == "delete_wire":
-            # Redo delete wire
-            start_component_id = params['start_component_id']
-            start_connection = params['start_connection']
-            end_component_id = params['end_component_id']
-            end_connection = params['end_connection']
-
-            # Find the wire
-            for wire in self.wire_items[:]:
-                if (wire.start_component.id == start_component_id and
-                    wire.start_connection == start_connection and
-                    wire.end_component.id == end_component_id and
-                    wire.end_connection == end_connection):
-                    # Remove the wire
-                    self._remove_wire(wire)
-                    break
-
-        elif action_type == "toggle_switch":
-            # Redo toggle switch
-            component_id = params['component_id']
-            new_state = params['new_state']
-
-            component = self.simulator.get_component(component_id)
-            if component and component.__class__.__name__ == 'Switch':
-                # Set the new state
-                component.set_property('state', new_state)
-                component.state['closed'] = new_state
-
-                # Update the component item
-                component_item = self._get_component_item(component_id)
-                if component_item:
-                    component_item.update()
-
-        # Mark changes
-        self.set_unsaved_changes(True)
 
     def delete_component(self, component_id, add_to_undo=True):
         """Delete a component.
@@ -2540,3 +2305,726 @@ class CircuitBoardWidget(QGraphicsView):
             return False
 
         return True
+
+    def _create_wires(self):
+        """Create wires between connected components."""
+        # Log the state before clearing
+        logger.info(f"Creating wires: current count = {len(self.wire_items)}")
+
+        # Clear existing wires - remove them from the scene first
+        for wire in self.wire_items[:]:  # Copy the list since we'll modify it
+            if wire in self.scene.items():
+                self.scene.removeItem(wire)
+            self.wire_items.remove(wire)
+
+        # Make sure the list is now empty
+        self.wire_items = []
+
+        # Track connections to avoid duplicates
+        processed_connections = set()
+
+        # Track multiple connections between same points
+        connection_counts = {}
+
+        # Process each component
+        for component_id, symbol in self.component_items.items():
+            component = symbol.component
+
+            # Get all connected components
+            connected_components = component.get_connected_components()
+            logger.info(f"Component {component_id} has {len(connected_components)} connections")
+
+            # Process each connection
+            for other_id, connection_name, other_connection in connected_components:
+                # Create a unique key for this connection
+                connection_key = frozenset([(component_id, connection_name), (other_id, other_connection)])
+
+                # Skip if we've already processed this connection
+                if connection_key in processed_connections:
+                    continue
+
+                # Mark this connection as processed
+                processed_connections.add(connection_key)
+
+                # Get the other component symbol
+                other_symbol = self._get_component_item(other_id)
+                if other_symbol:
+                    # Create a wire between them
+                    logger.info(f"Creating wire between {component_id}.{connection_name} and {other_id}.{other_connection}")
+                    wire = self._add_wire(
+                        component, connection_name,
+                        other_symbol.component, other_connection
+                    )
+                    if wire:
+                        logger.info(f"Wire created successfully")
+                    else:
+                        logger.warning(f"Failed to create wire")
+
+        # Update the scene
+        self.scene.update()
+        logger.info(f"Finished creating wires: new count = {len(self.wire_items)}")
+
+    def _add_wire_between_symbols(self, symbol1, conn1, symbol2, conn2, offset=0):
+        """Add a wire between two component symbols.
+
+        Args:
+            symbol1: First SchematicSymbolItem
+            conn1: First connection name
+            symbol2: Second SchematicSymbolItem
+            conn2: Second connection name
+            offset: Offset for multiple wires between the same connections
+
+        Returns:
+            WireGraphicsItem
+        """
+        # Create a wire with updated WireGraphicsItem
+        wire = WireGraphicsItem(symbol1.component, conn1, symbol2.component, conn2, self, offset)
+
+        # Add it to the scene
+        self.scene.addItem(wire)
+
+        # Store it
+        self.wire_symbols.append(wire)
+
+        return wire
+
+    def _delete_wire(self, wire):
+        """Delete a wire and add to the undo stack.
+
+        Args:
+            wire: WireGraphicsItem
+
+        Returns:
+            True if deleted, False if not found
+        """
+        if wire in self.wire_symbols:
+            # Add to undo stack
+            self._add_to_undo_stack(
+                "delete_wire",
+                start_component_id=wire.start_component.id,
+                start_connection=wire.start_connection,
+                end_component_id=wire.end_component.id,
+                end_connection=wire.end_connection
+            )
+
+            # Disconnect the components in the simulator
+            self.simulator.disconnect_components_at(
+                wire.start_component.id, wire.start_connection,
+                wire.end_component.id, wire.end_connection
+            )
+
+            # Remove the wire graphics item
+            self.scene.removeItem(wire)
+            self.wire_symbols.remove(wire)
+
+            # Mark changes
+            self.set_unsaved_changes(True)
+
+            # Recreate all wires to update offsets
+            self._create_wires()
+
+            return True
+
+        return False
+
+    def _finish_connection(self, end_component, end_connection):
+        """Finish creating a connection.
+
+        Args:
+            end_component: Target component
+            end_connection: Target connection name
+
+        Returns:
+            True if connection was successful, False otherwise
+        """
+        if not self.creating_connection or not self.connection_start_component:
+            return False
+
+        # Check if the connection is valid - allow components to connect regardless
+        # of position differences
+        if end_component.id == self.connection_start_component.id:
+            # Can't connect a component to itself
+            return False
+
+        # Check if either connection is already connected to this specific component
+        already_connected = False
+        if self.connection_start_point in self.connection_start_component.connected_to:
+            for other_id, other_conn in self.connection_start_component.connected_to[self.connection_start_point]:
+                if other_id == end_component.id and other_conn == end_connection:
+                    already_connected = True
+                    break
+
+        if already_connected:
+            logger.warning(f"Components are already connected")
+            return False
+
+        # Add a wire between the components
+        success = self.simulator.connect_components_at(
+            self.connection_start_component.id, self.connection_start_point,
+            end_component.id, end_connection
+        )
+
+        # Add debug logging
+        logger.info(f"Attempting to connect {self.connection_start_component.id}.{self.connection_start_point} to {end_component.id}.{end_connection}")
+
+
+        # Add wire display after successful connection
+        if success:
+            logger.info("Connection successful, creating wire display")
+            # Create a wire between the components
+            start_item = self._get_component_item(self.connection_start_component.id)
+            end_item = self._get_component_item(end_component.id)
+            if start_item and end_item:
+                wire = self._add_wire(
+                    self.connection_start_component, self.connection_start_point,
+                    end_component, end_connection
+                )
+                logger.info(f"Wire created: {wire}")
+            else:
+                logger.warning("Could not find component items for wire creation")
+
+            # Record the change
+            self._add_to_undo_stack(
+                "add_wire",
+                start_component_id=self.connection_start_component.id,
+                start_connection=self.connection_start_point,
+                end_component_id=end_component.id,
+                end_connection=end_connection
+            )
+
+            # Mark changes
+            self.set_unsaved_changes(True)
+
+            # Debug connections
+            self.debug_connections()
+
+        return success
+
+    def _show_context_menu(self, pos):
+        """Show the context menu.
+
+        Args:
+            pos: Position in view coordinates
+        """
+        # Convert position to scene coordinates
+        scene_pos = self.mapToScene(pos)
+
+        # Check if there are any items at this position
+        items = self.scene.items(scene_pos)
+
+        # Create menu
+        menu = QMenu(self)
+
+        if items:
+            # Find the top-most item (highest Z-value)
+            item = None
+            for i in items:
+                if isinstance(i, ComponentGraphicsItem) or isinstance(i, WireGraphicsItem):
+                    item = i
+                    break
+
+            if item:
+                # Item-specific actions
+                if isinstance(item, ComponentGraphicsItem):
+                    # Component actions
+                    component = item.component
+
+                    # Rotate action
+                    rotate_action = QAction("Rotate 90° Clockwise", self)
+                    rotate_action.triggered.connect(lambda: self._rotate_component(component, 90))
+                    menu.addAction(rotate_action)
+
+                    # Delete action
+                    delete_action = QAction("Delete Component", self)
+                    delete_action.triggered.connect(lambda: self.delete_component(component.id))
+                    menu.addAction(delete_action)
+
+                    # Properties action
+                    props_action = QAction("Properties...", self)
+                    props_action.triggered.connect(lambda: self._show_component_properties(component))
+                    menu.addAction(props_action)
+
+                    # Connection management submenu
+                    if any(len(conns) > 0 for conns in component.connected_to.values()):
+                        connections_menu = menu.addMenu("Connections")
+
+                        # Add entries for each connection
+                        for conn_name, conn_list in component.connected_to.items():
+                            if conn_list:  # If there are connections
+                                conn_submenu = connections_menu.addMenu(f"{conn_name} ({len(conn_list)})")
+
+                                for i, (other_id, other_conn) in enumerate(conn_list):
+                                    other_comp = self.simulator.get_component(other_id)
+                                    if other_comp:
+                                        other_type = other_comp.__class__.__name__
+                                        action_text = f"Disconnect from {other_type} {other_id[:6]}... ({other_conn})"
+                                        disconnect_action = QAction(action_text, self)
+                                        disconnect_action.triggered.connect(
+                                            lambda checked, cid=component.id, cn=conn_name, oid=other_id, ocn=other_conn:
+                                            self._disconnect_connection(cid, cn, oid, ocn)
+                                        )
+                                        conn_submenu.addAction(disconnect_action)
+
+                    # If this is a switch, add toggle action
+                    if component.__class__.__name__ == 'Switch':
+                        toggle_action = QAction("Toggle Switch", self)
+                        toggle_action.triggered.connect(lambda: self._toggle_switch(component))
+                        menu.addAction(toggle_action)
+
+                elif isinstance(item, WireGraphicsItem):
+                    # Wire actions
+                    delete_action = QAction("Delete Wire", self)
+                    delete_action.triggered.connect(lambda: self._delete_wire(item))
+                    menu.addAction(delete_action)
+        else:
+            # General actions
+            paste_action = QAction("Paste", self)
+            paste_action.triggered.connect(self.paste)
+            paste_action.setEnabled(len(self.clipboard) > 0)
+            menu.addAction(paste_action)
+
+        # Show the menu
+        menu.exec_(self.mapToGlobal(pos))
+
+
+
+    def _disconnect_connection(self, component_id, connection_name, other_id, other_connection):
+        """Disconnect a specific connection.
+
+        Args:
+            component_id: First component ID
+            connection_name: First component connection name
+            other_id: Second component ID
+            other_connection: Second component connection name
+
+        Returns:
+            True if successful, False otherwise
+        """
+        # Disconnect the components in the simulator
+        success = self.simulator.disconnect_components_at(
+            component_id, connection_name,
+            other_id, other_connection
+        )
+
+        if success:
+            # Add to undo stack
+            self._add_to_undo_stack(
+                "delete_wire",
+                start_component_id=component_id,
+                start_connection=connection_name,
+                end_component_id=other_id,
+                end_connection=other_connection
+            )
+
+            # Mark changes
+            self.set_unsaved_changes(True)
+
+            # Recreate all wires to update offsets
+            self._create_wires()
+
+        return success
+
+    def undo(self):
+        """Undo the last action."""
+        if not self.undo_stack:
+            return
+
+        # Get the last action
+        action = self.undo_stack.pop()
+
+        # Add to redo stack
+        self.redo_stack.append(action)
+
+        # Perform the undo based on action type
+        action_type = action['action']
+        params = action['params']
+
+        if action_type == "add_component":
+            # Undo add component by removing it
+            component_id = params['component_id']
+            self.delete_component(component_id, add_to_undo=False)
+
+        elif action_type == "delete_component":
+            # Undo delete component by adding it back
+            component_type = params['component_type']
+            properties = params['properties']
+            position = params['position']
+            rotation = params['rotation']
+            component_id = params['component_id']
+            connected_to = params.get('connected_to', {})
+
+            # Create the component
+            component = self._create_component(component_type, properties)
+            if component:
+                # Set the same ID
+                component.id = component_id
+
+                # Set position and rotation
+                component.position = position
+                component.set_rotation(rotation)
+
+                # Restore connections
+                component.connected_to = connected_to
+
+                # Add to simulator
+                self.simulator.add_component(component)
+
+                # Add graphics item
+                self._add_component_item(component)
+
+                # Recreate all connections
+                for conn_name, conn_list in connected_to.items():
+                    for other_id, other_conn in conn_list:
+                        other_component = self.simulator.get_component(other_id)
+                        if other_component:
+                            self.simulator.connect_components_at(
+                                component_id, conn_name,
+                                other_id, other_conn
+                            )
+
+        elif action_type == "move_component":
+            # Undo move component by moving it back
+            component_id = params['component_id']
+            old_position = params['old_position']
+
+            component = self.simulator.get_component(component_id)
+            if component:
+                # Set the original position
+                component.position = old_position
+
+                # Update the component item
+                component_item = self._get_component_item(component_id)
+                if component_item:
+                    component_item.update_position()
+
+                # Update connected wires
+                self._update_connected_wires(component)
+
+        elif action_type == "rotate_component":
+            # Undo rotate component by rotating it back
+            component_id = params['component_id']
+            old_rotation = params['old_rotation']
+
+            component = self.simulator.get_component(component_id)
+            if component:
+                # Set the original rotation
+                component.set_rotation(old_rotation)
+
+                # Update the component item
+                component_item = self._get_component_item(component_id)
+                if component_item:
+                    component_item.update_position()
+
+                # Update connected wires
+                self._update_connected_wires(component)
+
+        elif action_type == "add_wire":
+            # Undo add wire by removing it
+            start_component_id = params['start_component_id']
+            start_connection = params['start_connection']
+            end_component_id = params['end_component_id']
+            end_connection = params['end_connection']
+
+            # Disconnect the components in the simulator
+            self.simulator.disconnect_components_at(
+                start_component_id, start_connection,
+                end_component_id, end_connection
+            )
+
+            # Find and remove the wire from UI
+            for wire in self.wire_symbols[:]:
+                if (wire.start_component.id == start_component_id and
+                    wire.start_connection == start_connection and
+                    wire.end_component.id == end_component_id and
+                    wire.end_connection == end_connection):
+
+                    # Remove the wire from scene
+                    self.scene.removeItem(wire)
+
+                    # Remove from our list
+                    self.wire_symbols.remove(wire)
+                    break
+
+        elif action_type == "delete_wire":
+            # Undo delete wire by adding it back
+            start_component_id = params['start_component_id']
+            start_connection = params['start_connection']
+            end_component_id = params['end_component_id']
+            end_connection = params['end_connection']
+
+            # Get the components
+            start_component = self.simulator.get_component(start_component_id)
+            end_component = self.simulator.get_component(end_component_id)
+
+            if start_component and end_component:
+                # Connect the components
+                self.simulator.connect_components_at(
+                    start_component_id, start_connection,
+                    end_component_id, end_connection
+                )
+
+                # Find the component items
+                start_item = self._get_component_item(start_component_id)
+                end_item = self._get_component_item(end_component_id)
+
+                if start_item and end_item:
+                    # Add a wire between them
+                    self._add_wire_between_symbols(
+                        start_item, start_connection,
+                        end_item, end_connection
+                    )
+
+        elif action_type == "toggle_switch":
+            # Undo toggle switch by toggling it back
+            component_id = params['component_id']
+            old_state = params['old_state']
+
+            component = self.simulator.get_component(component_id)
+            if component and component.__class__.__name__ == 'Switch':
+                # Set the original state
+                component.set_property('state', old_state)
+                component.state['closed'] = old_state
+
+                # Update the component item
+                component_item = self._get_component_item(component_id)
+                if component_item:
+                    component_item.update()
+
+        # Mark changes
+        self.set_unsaved_changes(True)
+
+    def redo(self):
+        """Redo the last undone action."""
+        if not self.redo_stack:
+            return
+
+        # Get the last undone action
+        action = self.redo_stack.pop()
+
+        # Add to undo stack
+        self.undo_stack.append(action)
+
+        # Perform the redo based on action type
+        action_type = action['action']
+        params = action['params']
+
+        if action_type == "add_component":
+            # Redo add component
+            component_type = params['component_type']
+            properties = params['properties']
+            position = params['position']
+            rotation = params['rotation']
+            component_id = params['component_id']
+            connected_to = params.get('connected_to', {})
+
+            # Create the component
+            component = self._create_component(component_type, properties)
+            if component:
+                # Set the same ID
+                component.id = component_id
+
+                # Set position and rotation
+                component.position = position
+                component.set_rotation(rotation)
+
+                # Restore connections
+                component.connected_to = connected_to
+
+                # Add to simulator
+                self.simulator.add_component(component)
+
+                # Add graphics item
+                self._add_component_item(component)
+
+                # Recreate all connections
+                for conn_name, conn_list in connected_to.items():
+                    for other_id, other_conn in conn_list:
+                        other_component = self.simulator.get_component(other_id)
+                        if other_component:
+                            self.simulator.connect_components_at(
+                                component_id, conn_name,
+                                other_id, other_conn
+                            )
+
+        elif action_type == "delete_component":
+            # Redo delete component
+            component_id = params['component_id']
+            self.delete_component(component_id, add_to_undo=False)
+
+        elif action_type == "move_component":
+            # Redo move component
+            component_id = params['component_id']
+            new_position = params['new_position']
+
+            component = self.simulator.get_component(component_id)
+            if component:
+                # Set the new position
+                component.position = new_position
+
+                # Update the component item
+                component_item = self._get_component_item(component_id)
+                if component_item:
+                    component_item.update_position()
+
+                # Update connected wires
+                self._update_connected_wires(component)
+
+        elif action_type == "rotate_component":
+            # Redo rotate component
+            component_id = params['component_id']
+            new_rotation = params['new_rotation']
+
+            component = self.simulator.get_component(component_id)
+            if component:
+                # Set the new rotation
+                component.set_rotation(new_rotation)
+
+                # Update the component item
+                component_item = self._get_component_item(component_id)
+                if component_item:
+                    component_item.update_position()
+
+                # Update connected wires
+                self._update_connected_wires(component)
+
+        elif action_type == "add_wire":
+            # Redo add wire
+            start_component_id = params['start_component_id']
+            start_connection = params['start_connection']
+            end_component_id = params['end_component_id']
+            end_connection = params['end_connection']
+
+            # Get the components
+            start_component = self.simulator.get_component(start_component_id)
+            end_component = self.simulator.get_component(end_component_id)
+
+            if start_component and end_component:
+                # Connect the components
+                self.simulator.connect_components_at(
+                    start_component_id, start_connection,
+                    end_component_id, end_connection
+                )
+
+                # Find the component items
+                start_item = self._get_component_item(start_component_id)
+                end_item = self._get_component_item(end_component_id)
+
+                if start_item and end_item:
+                    # Add a wire between them
+                    self._add_wire_between_symbols(
+                        start_item, start_connection,
+                        end_item, end_connection
+                    )
+
+        elif action_type == "delete_wire":
+            # Redo delete wire
+            start_component_id = params['start_component_id']
+            start_connection = params['start_connection']
+            end_component_id = params['end_component_id']
+            end_connection = params['end_connection']
+
+            # Disconnect the components in the simulator
+            self.simulator.disconnect_components_at(
+                start_component_id, start_connection,
+                end_component_id, end_connection
+            )
+
+            # Find and remove the wire from UI
+            for wire in self.wire_symbols[:]:
+                if (wire.start_component.id == start_component_id and
+                    wire.start_connection == start_connection and
+                    wire.end_component.id == end_component_id and
+                    wire.end_connection == end_connection):
+
+                    # Remove the wire from scene
+                    self.scene.removeItem(wire)
+
+                    # Remove from our list
+                    self.wire_symbols.remove(wire)
+                    break
+
+        elif action_type == "toggle_switch":
+            # Redo toggle switch
+            component_id = params['component_id']
+            new_state = params['new_state']
+
+            component = self.simulator.get_component(component_id)
+            if component and component.__class__.__name__ == 'Switch':
+                # Set the new state
+                component.set_property('state', new_state)
+                component.state['closed'] = new_state
+
+                # Update the component item
+                component_item = self._get_component_item(component_id)
+                if component_item:
+                    component_item.update()
+
+        # Mark changes
+        self.set_unsaved_changes(True)
+
+    def _process_connection(self, component_id, component, symbol, connection_name,
+                           other_id, other_connection, processed_connections, connection_counts):
+        """Process a single connection between components.
+
+        Args:
+            component_id: ID of the first component
+            component: First component
+            symbol: Graphics item for the first component
+            connection_name: Connection name on the first component
+            other_id: ID of the second component
+            other_connection: Connection name on the second component
+            processed_connections: Set of already processed connections
+            connection_counts: Dictionary tracking multiple connections between same points
+        """
+        # Create a unique key for this connection
+        connection_key = frozenset([(component_id, connection_name), (other_id, other_connection)])
+
+        # Skip if we've already processed this connection
+        if connection_key in processed_connections:
+            return
+
+        # Mark this connection as processed
+        processed_connections.add(connection_key)
+
+        # Get the other component symbol
+        if other_id in self.component_items:
+            other_symbol = self.component_items[other_id]
+
+            # Determine offset for multiple wires between the same points
+            connection_pair = (component.position, other_symbol.component.position)
+            if connection_pair not in connection_counts:
+                connection_counts[connection_pair] = 0
+
+            offset = connection_counts[connection_pair]
+            connection_counts[connection_pair] += 1
+
+            # Create a wire between them
+            self._add_wire_between_symbols(
+                symbol, connection_name,
+                other_symbol, other_connection,
+                offset
+            )
+
+    def debug_connections(self):
+        """Print debug information about connections."""
+        logger.info("=== DEBUG CONNECTIONS ===")
+        logger.info(f"Number of components: {len(self.component_items)}")
+        logger.info(f"Number of wires: {len(self.wire_items)}")
+
+        # Check each component's connections
+        for component_id, component_item in self.component_items.items():
+            component = component_item.component
+            connected_to = component.connected_to
+            logger.info(f"Component {component_id} connections: {connected_to}")
+
+            # Check for connection points
+            for conn_name, conn_pos in component.connection_points.items():
+                logger.info(f"  Connection point {conn_name}: {conn_pos}")
+
+        # Check each wire
+        for i, wire in enumerate(self.wire_items):
+            logger.info(f"Wire {i}: {wire.start_component.id}.{wire.start_connection} → {wire.end_component.id}.{wire.end_connection}")
+            logger.info(f"  Start pos: {wire.start_pos}, End pos: {wire.end_pos}")
+            logger.info(f"  Offset: {wire.offset}")
+
+        logger.info("=== END DEBUG CONNECTIONS ===")

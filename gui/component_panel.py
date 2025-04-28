@@ -514,10 +514,10 @@ class ComponentPropertiesDialog(QDialog):
             self.property_widgets["max_current"] = current_widget
 
         elif self.component_type == "LED":
-            # Forward voltage
+            # Forward voltage - increase default for LEDs
             vf_widget = QDoubleSpinBox()
             vf_widget.setRange(0.1, 10)
-            vf_widget.setValue(2.0)  # Default for LED
+            vf_widget.setValue(2.0)  # Increased from 0.7V to 2.0V for LED
             vf_widget.setSuffix(" V")
             vf_widget.setDecimals(2)
             self.form_layout.addRow("Forward Voltage:", vf_widget)

@@ -14,6 +14,10 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QColor, QTextCharFormat, QTextCursor
 
+from components.active_components import (
+    DCVoltageSource, ACVoltageSource, DCCurrentSource, Diode, LED, BJT, Switch
+)
+from components.passive_components import Resistor, Capacitor, Inductor, Ground
 import config
 from utils.logger import SimulationEvent
 
@@ -241,6 +245,16 @@ class DebugConsoleWidget(QWidget):
         clear_log_button = QPushButton("Clear Log")
         clear_log_button.clicked.connect(self.log_panel.clear)
         buttons_layout.addWidget(clear_log_button)
+
+        # Test LED circuit button
+        test_led_button = QPushButton("Test LED Circuit")
+        test_led_button.clicked.connect(self.test_led_circuit)
+        buttons_layout.addWidget(test_led_button)
+
+        # Test resistor circuit button
+        test_resistor_button = QPushButton("Test resistor Circuit")
+        test_resistor_button.clicked.connect(self.test_resistor_circuit)
+        buttons_layout.addWidget(test_resistor_button)
 
         # Log level combo
         log_level_layout = QHBoxLayout()
@@ -598,3 +612,99 @@ Available commands:
 
         elif event_type == SimulationEvent.CIRCUIT_BUILT:
             logger.info(f"Circuit built: {data.get('nodes', 0)} nodes, {data.get('components', 0)} components")
+
+    def test_led_circuit(self):
+        """Create a simple test circuit."""
+        logger.info("Creating test circuit...")
+
+        # Clear existing circuit
+        self.simulator.clear()
+
+        # Create a DC voltage source
+        dc_source = DCVoltageSource(properties={'voltage': 5.0})
+        dc_source.position = (0, 5)
+        self.simulator.add_component(dc_source)
+        logger.info(f"Added DC source: {dc_source.id}")
+
+        # Create an LED
+        led = LED(properties={'forward_voltage': 2.0, 'color': 'red'})
+        led.position = (0, -5)
+        self.simulator.add_component(led)
+        logger.info(f"Added LED: {led.id}")
+
+        # Connect the DC source positive terminal to the LED anode
+        success1 = self.simulator.connect_components_at(
+            dc_source.id, 'pos',
+            led.id, 'anode'
+        )
+        logger.info(f"Connection 1 created: {success1}")
+
+        # Connect the DC source negative terminal to the LED cathode
+        success2 = self.simulator.connect_components_at(
+            dc_source.id, 'neg',
+            led.id, 'cathode'
+        )
+        logger.info(f"Connection 2 created: {success2}")
+
+        # Build the circuit
+        self.simulator.build_circuit_from_components()
+
+        # Start the simulation
+        self.simulator.start_simulation()
+
+        logger.info("Test circuit created and simulation started")
+
+    def test_resistor_circuit(self):
+        """Create a test circuit with a DC voltage source and resistor."""
+        logger.info("Creating resistor test circuit...")
+
+        # Clear existing circuit
+        self.simulator.clear()
+
+        # Create DC voltage source
+        dc_source = DCVoltageSource(properties={'voltage': 5.0})
+        dc_source.position = (0, 3)
+        dc_id = dc_source.id
+        self.simulator.add_component(dc_source)
+        logger.info(f"Added DC source: {dc_id}")
+
+        # Create resistor
+        resistor = Resistor(properties={'resistance': 1000.0})  # 1 kΩ
+        resistor.position = (0, -3)
+        res_id = resistor.id
+        self.simulator.add_component(resistor)
+        logger.info(f"Added resistor: {res_id}")
+
+        # Connect them
+        conn1 = self.simulator.connect_components_at(
+            dc_id, 'pos',
+            res_id, 'p1'
+        )
+        logger.info(f"Connected DCVoltageSource pos to resistor p1: {conn1}")
+
+        conn2 = self.simulator.connect_components_at(
+            dc_id, 'neg',
+            res_id, 'p2'
+        )
+        logger.info(f"Connected DCVoltageSource neg to resistor p2: {conn2}")
+
+        # Build the circuit
+        self.simulator.build_circuit_from_components()
+
+        # Start the simulation
+        self.simulator.start_simulation()
+        logger.info("Test circuit created and simulation started")
+
+        # Run for a few steps
+        for i in range(10):
+            self.simulator.update()
+
+        # Print results
+        logger.info("Test Circuit Results:")
+        logger.info(f"Resistor p1 voltage: {resistor.state.get('voltages', {}).get('p1', 0.0)}")
+        logger.info(f"Resistor p2 voltage: {resistor.state.get('voltages', {}).get('p2', 0.0)}")
+        logger.info(f"Resistor current: {resistor.state.get('currents', {}).get('p1', 0.0)}")
+        logger.info(f"Resistor power: {resistor.state.get('power', 0.0)}")
+
+        # Return success if there's a current flowing
+        return abs(resistor.state.get('currents', {}).get('p1', 0.0)) > 1e-6
