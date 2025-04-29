@@ -517,7 +517,7 @@ class LEDSymbol(DiodeSymbol):
         if brightness > 0.01:
             painter.setPen(QPen(QColor(led_color), 1))
 
-            # Draw two arrows
+            # Draw three arrows
             for angle, length in [(-30, 10), (0, 12), (30, 10)]:
                 rad = math.radians(angle)
                 dx = math.cos(rad) * length
@@ -531,13 +531,16 @@ class LEDSymbol(DiodeSymbol):
                 end_x = start_x + dx
                 end_y = start_y - dy
 
-                # Draw arrow line
-                painter.drawLine(start_x, start_y, end_x, end_y)
+                # Draw arrow line - convert to QPointF for float coordinates
+                painter.drawLine(QPointF(start_x, start_y), QPointF(end_x, end_y))
 
                 # Draw arrow head
                 arrow_head_size = 3
-                painter.drawLine(end_x, end_y, end_x - arrow_head_size, end_y - arrow_head_size)
-                painter.drawLine(end_x, end_y, end_x - arrow_head_size, end_y + arrow_head_size)
+                # Convert to QPointF for float coordinates
+                painter.drawLine(QPointF(end_x, end_y),
+                                QPointF(end_x - arrow_head_size, end_y - arrow_head_size))
+                painter.drawLine(QPointF(end_x, end_y),
+                                QPointF(end_x - arrow_head_size, end_y + arrow_head_size))
 
     def update_symbol(self):
         """Update the symbol based on the component state."""

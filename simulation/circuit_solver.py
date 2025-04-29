@@ -47,86 +47,224 @@ class CircuitSolver:
         # Set ground node voltage to 0V
         self.simulator.ground_node.voltage = 0.0
 
-
-        # IMPORTANT: Add this debugging to understand the connections
-        logger.info("Solving circuit...")
+        # DEBUG: Enhanced debugging information
+        logger.info("============ CIRCUIT DEBUGGING INFO ============")
         logger.info(f"Number of components: {len(self.simulator.components)}")
         logger.info(f"Number of nodes: {len(self.simulator.nodes)}")
-        logger.info(f"Ground node: {self.simulator.ground_node.id if self.simulator.ground_node else 'None'}")
 
+        # Debug all components and their connections
+        for comp_id, component in self.simulator.components.items():
+            logger.info(f"Component: {component.__class__.__name__} ({comp_id[:8]}...)")
+            for conn_name, connected_list in component.connected_to.items():
+                connected_str = ", ".join([f"{cid[:8]}...:{conn}" for cid, conn in connected_list])
+                logger.info(f"  Connection {conn_name} connected to: {connected_str}")
 
-        # Process voltage sources first to set initial node voltages
-        for component_id, component in self.simulator.components.items():
+            # For voltage sources, show the current state
             if component.__class__.__name__ in ['DCVoltageSource', 'ACVoltageSource']:
-                # Get the nodes
-                node_pos = self.simulator.get_node_for_component(component_id, 'pos')
-                node_neg = self.simulator.get_node_for_component(component_id, 'neg')
+                v_pos = component.state.get('voltages', {}).get('pos', 0.0)
+                v_neg = component.state.get('voltages', {}).get('neg', 0.0)
+                logger.info(f"  Current state: pos={v_pos}V, neg={v_neg}V")
 
-                # Get the voltage
-                if component.__class__.__name__ == 'DCVoltageSource':
-                    voltage = component.get_property('voltage', config.DEFAULT_VOLTAGE)
-                    logger.info(f"DC Source {component_id[:8]}...: voltage={voltage}V")
-
-                    # Set node voltages
-                    if node_pos:
-                        node_pos.voltage = voltage
-                        logger.info(f"Setting {node_pos.id} voltage to {voltage}V")
-
-                    if node_neg:
-                        node_neg.voltage = 0.0
-                        logger.info(f"Setting {node_neg.id} voltage to 0.0V")
-
-        # Now propagate voltages to connected components
-        # For each node, we need to set the voltages of all connected components
+        # Debug all nodes and what components they contain
         for node_id, node in self.simulator.nodes.items():
-            node_voltage = node.voltage
-            logger.info(f"Node {node_id} has voltage {node_voltage}V")
+            components_str = ", ".join([f"{c.__class__.__name__} ({c.id[:8]}...):{conn}"
+                                       for c, conn in node.get_connected_components()])
+            logger.info(f"Node {node_id}: voltage={node.voltage}V, connects: {components_str}")
 
-            # Set this voltage for all component connections at this node
-            for component, connection_name in node.get_connected_components():
-                if hasattr(component, 'state') and 'voltages' in component.state:
-                    component.state['voltages'][connection_name] = node_voltage
-                    logger.info(f"  Setting {component.__class__.__name__} {component.id[:8]}... {connection_name} to {node_voltage}V")
+        logger.info("=================================================")
 
-        # Process diodes and LEDs to check forward bias
-        for component_id, component in self.simulator.components.items():
-            if component.__class__.__name__ in ['Diode', 'LED']:
-                v_anode = component.state.get('voltages', {}).get('anode', 0.0)
-                v_cathode = component.state.get('voltages', {}).get('cathode', 0.0)
-                voltage_drop = v_anode - v_cathode
-                forward_voltage = component.get_property('forward_voltage', 0.7 if component.__class__.__name__ == 'Diode' else 2.0)
+        # Solve iteratively until convergence
+        max_iterations = 10  # Limit iterations to prevent infinite loops
+        converged = False
+        iteration = 0
 
-                logger.info(f"{component.__class__.__name__} {component_id[:8]}...: anode={v_anode:.2f}V, cathode={v_cathode:.2f}V, drop={voltage_drop:.2f}V, threshold={forward_voltage:.2f}V")
+        while not converged and iteration < max_iterations:
+            iteration += 1
+            logger.info(f"Solving iteration {iteration}...")
 
-                # Check if forward biased
-                if voltage_drop > forward_voltage * 0.9:
-                    # Forward biased - calculate current
-                    resistance = 0.1  # Small resistance when conducting
-                    current = (voltage_drop - forward_voltage) / resistance
-                    max_current = component.get_property('max_current', 1.0)
+            # Store previous node voltages to check convergence
+            previous_voltages = {}
+            for node_id, node in self.simulator.nodes.items():
+                previous_voltages[node_id] = node.voltage
 
-                    if current > max_current:
-                        current = max_current
 
-                    logger.info(f"  CONDUCTING: current={current*1000:.2f}mA")
+            # Process voltage sources first to set initial node voltages
+            for component_id, component in self.simulator.components.items():
+                if component.__class__.__name__ in ['DCVoltageSource', 'ACVoltageSource']:
+                    # Get the voltage
+                    if component.__class__.__name__ == 'DCVoltageSource':
+                        voltage = component.get_property('voltage', config.DEFAULT_VOLTAGE)
+                        logger.info(f"DC Source {component_id[:8]}...: voltage={voltage}V")
+
+                        # FIND NODES FOR POS AND NEG TERMINALS
+                        # We need to search through all nodes to find which ones have these connections
+                        pos_node = None
+                        neg_node = None
+
+                        for node_id, node in self.simulator.nodes.items():
+                            for comp, conn in node.get_connected_components():
+                                if comp.id == component_id:
+                                    if conn == 'pos':
+                                        pos_node = node
+                                        logger.info(f"Found positive terminal at node: {node_id}")
+                                    elif conn == 'neg':
+                                        neg_node = node
+                                        logger.info(f"Found negative terminal at node: {node_id}")
+
+                        logger.info(f"Voltage source terminals: pos_node={pos_node.id if pos_node else 'None'}, "
+                                   f"neg_node={neg_node.id if neg_node else 'None'}")
+
+                        # Set node voltages
+                        if pos_node:
+                            pos_node.voltage = voltage
+                            logger.info(f"Setting node {pos_node.id} voltage to {voltage}V")
+
+                        if neg_node and neg_node != self.simulator.ground_node:
+                            neg_node.voltage = 0.0
+                            logger.info(f"Setting node {neg_node.id} voltage to 0.0V")
+
+            # Now propagate voltages to connected components
+            # DEBUG: Show the node voltages after voltage source application
+            logger.info("Node voltages after voltage source processing:")
+            for node_id, node in self.simulator.nodes.items():
+                logger.info(f"  Node {node_id}: {node.voltage}V")
+
+            # For each node, set the voltages of all connected components
+            for node_id, node in self.simulator.nodes.items():
+                node_voltage = node.voltage
+                logger.info(f"Node {node_id} has voltage {node_voltage}V")
+
+                # Set this voltage for all component connections at this node
+                for component, connection_name in node.get_connected_components():
+                    if hasattr(component, 'state') and 'voltages' in component.state:
+                        component.state['voltages'][connection_name] = node_voltage
+                        logger.info(f"  Setting {component.__class__.__name__} {component.id[:8]}... {connection_name} to {node_voltage}V")
+
+
+            # Process diodes and LEDs to check forward bias
+            for component_id, component in self.simulator.components.items():
+                if component.__class__.__name__ in ['Diode', 'LED']:
+                    v_anode = component.state.get('voltages', {}).get('anode', 0.0)
+                    v_cathode = component.state.get('voltages', {}).get('cathode', 0.0)
+                    voltage_drop = v_anode - v_cathode
+                    forward_voltage = component.get_property('forward_voltage', 0.7 if component.__class__.__name__ == 'Diode' else 2.0)
+
+                    logger.info(f"{component.__class__.__name__} {component_id[:8]}...: anode={v_anode:.2f}V, cathode={v_cathode:.2f}V, drop={voltage_drop:.2f}V, threshold={forward_voltage:.2f}V")
+
+                    # Check if forward biased
+                    if voltage_drop > forward_voltage * 0.9:
+                        # Forward biased - conducting
+                        # IMPORTANT CHANGE: When conducting, adjust the cathode voltage to model the proper forward voltage drop
+                        new_cathode_voltage = v_anode - forward_voltage
+
+                        resistance = 0.1  # Small resistance when conducting
+                        current = (voltage_drop - forward_voltage) / resistance
+                        max_current = component.get_property('max_current', 1.0)
+
+                        if current > max_current:
+                            current = max_current
+
+                        logger.info(f"  CONDUCTING: current={current*1000:.2f}mA")
+
+                        # Update component state
+                        component.state['currents'] = {'anode': current, 'cathode': -current}
+                        component.state['conducting'] = True
+
+                        # For LED, update brightness
+                        if component.__class__.__name__ == 'LED':
+                            max_led_current = component.get_property('max_current', 0.02)
+                            brightness = min(1.0, current / max_led_current)
+                            component.state['brightness'] = brightness
+                            logger.info(f"  LED brightness: {brightness:.2f}")
+
+                        # Find the nodes for this component's terminals
+                        node_anode = None
+                        node_cathode = None
+
+                        for node_id, node in self.simulator.nodes.items():
+                            for comp, conn in node.get_connected_components():
+                                if comp.id == component_id:
+                                    if conn == 'anode':
+                                        node_anode = node
+                                    elif conn == 'cathode':
+                                        node_cathode = node
+
+                        # Update the cathode node voltage to reflect the voltage drop
+                        if node_cathode and node_cathode != self.simulator.ground_node:
+                            node_cathode.voltage = new_cathode_voltage
+                            logger.info(f"  Setting node {node_cathode.id} voltage to {new_cathode_voltage:.2f}V to model forward voltage drop")
+                    else:
+                        # Not conducting
+                        logger.info(f"  NOT CONDUCTING: insufficient voltage")
+                        component.state['currents'] = {'anode': 0.0, 'cathode': 0.0}
+                        component.state['conducting'] = False
+                        if component.__class__.__name__ == 'LED':
+                            component.state['brightness'] = 0.0
+
+            # Process resistors to calculate currents
+            for component_id, component in self.simulator.components.items():
+                if component.__class__.__name__ == 'Resistor':
+                    v_p1 = component.state.get('voltages', {}).get('p1', 0.0)
+                    v_p2 = component.state.get('voltages', {}).get('p2', 0.0)
+                    voltage_drop = v_p1 - v_p2
+
+                    # Calculate current using Ohm's law
+                    resistance = component.get_property('resistance', config.DEFAULT_RESISTANCE)
+                    current = voltage_drop / resistance if resistance > 0 else 0.0
+
+                    # Calculate power
+                    power = voltage_drop * current
+
+                    logger.info(f"Resistor {component_id[:8]}...: p1={v_p1:.2f}V, p2={v_p2:.2f}V, drop={voltage_drop:.2f}V")
+                    logger.info(f"  Current: {current*1000:.2f}mA, Power: {power*1000:.2f}mW")
 
                     # Update component state
-                    component.state['currents'] = {'anode': current, 'cathode': -current}
-                    component.state['conducting'] = True
+                    component.state['currents'] = {'p1': current, 'p2': -current}  # Current in = current out
+                    component.state['power'] = power
 
-                    # For LED, update brightness
-                    if component.__class__.__name__ == 'LED':
-                        max_led_current = component.get_property('max_current', 0.02)
-                        brightness = min(1.0, current / max_led_current)
-                        component.state['brightness'] = brightness
-                        logger.info(f"  LED brightness: {brightness:.2f}")
-                else:
-                    # Not conducting
-                    logger.info(f"  NOT CONDUCTING: insufficient voltage")
-                    component.state['currents'] = {'anode': 0.0, 'cathode': 0.0}
-                    component.state['conducting'] = False
-                    if component.__class__.__name__ == 'LED':
-                        component.state['brightness'] = 0.0
+            # Process voltage sources to calculate currents
+            for component_id, component in self.simulator.components.items():
+                if component.__class__.__name__ in ['DCVoltageSource', 'ACVoltageSource']:
+                    # Find the connected components to determine current
+                    current = 0.0
+
+                    # For simplicity, let's just look at connected resistors
+                    for conn_name, connected_list in component.connected_to.items():
+                        for other_id, other_conn in connected_list:
+                            other_comp = self.simulator.components.get(other_id)
+                            if other_comp and other_comp.__class__.__name__ == 'Resistor':
+                                # Use the resistor's current, but with proper sign based on connection
+                                if conn_name == 'pos':
+                                    # Current flowing out of positive terminal
+                                    res_current = other_comp.state.get('currents', {}).get(other_conn, 0.0)
+                                    current -= res_current  # Negate because current flows out of source
+                                elif conn_name == 'neg':
+                                    # Current flowing into negative terminal
+                                    res_current = other_comp.state.get('currents', {}).get(other_conn, 0.0)
+                                    current += res_current  # Positive because current flows into source
+
+                    # Update component state
+                    component.state['currents'] = {'pos': current, 'neg': -current}
+
+                    # Calculate power
+                    voltage = component.get_property('voltage', config.DEFAULT_VOLTAGE)
+                    power = voltage * current
+                    component.state['power'] = power
+
+                    logger.info(f"Voltage Source {component_id[:8]}...: current={current*1000:.2f}mA, power={power*1000:.2f}mW")
+
+
+        # Check for convergence
+        voltage_change = 0.0
+        for node_id, node in self.simulator.nodes.items():
+            if node_id in previous_voltages:
+                voltage_change += abs(node.voltage - previous_voltages[node_id])
+
+        logger.info(f"Iteration {iteration} voltage change: {voltage_change:.6f}V")
+        if voltage_change < 0.001:  # Convergence threshold
+            converged = True
+            logger.info(f"Circuit solution converged after {iteration} iterations")
+
 
         # Log all node voltages after solving
         logger.info("Final node voltages:")
@@ -135,7 +273,7 @@ class CircuitSolver:
 
         # Return stats
         return {
-            'iterations': 1,
+            'iterations': iteration,
             'node_update_time': time.time() - start_time
         }
 

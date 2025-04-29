@@ -36,7 +36,10 @@ class Node:
             component: Component object
             connection_name: Connection name on the component
         """
-        self.components[(component.id, connection_name)] = component
+        key = (component.id, connection_name)
+        if key not in self.components:
+            self.components[key] = component
+            logger.debug(f"Added {component.__class__.__name__} ({component.id[:8]}...) {connection_name} to node {self.id}")
 
     def remove_component(self, component_id, connection_name):
         """Remove a component from the node.
@@ -48,8 +51,10 @@ class Node:
         Returns:
             True if component was removed, False if not found
         """
-        if (component_id, connection_name) in self.components:
-            del self.components[(component_id, connection_name)]
+        key = (component_id, connection_name)
+        if key in self.components:
+            del self.components[key]
+            logger.debug(f"Removed component {component_id[:8]}... {connection_name} from node {self.id}")
             return True
         return False
 
@@ -73,13 +78,15 @@ class Node:
             current = component.get_current(connection_name)
             if current is not None:
                 current_sum += current
+                logger.debug(f"Node {self.id}: {component.__class__.__name__} {connection_name} current: {current*1000:.2f}mA")
 
         self.current_sum = current_sum
+        logger.debug(f"Node {self.id}: total current sum: {current_sum*1000:.2f}mA")
         return current_sum
 
     def __str__(self):
-        return f"Node({self.id}, {len(self.components)} components, {self.voltage:.3f}V)"
-
+        num_components = len(self.components)
+        return f"Node({self.id}, {num_components} components, {self.voltage:.3f}V)"
 
 
 class CircuitSimulator:
@@ -248,17 +255,16 @@ class CircuitSimulator:
         Returns:
             Node object or None if not found
         """
-        component = self.get_component(component_id)
-        if not component:
-            return None
+        # Search all nodes for this component and connection
+        for node_id, node in self.nodes.items():
+            for comp, conn_name in node.get_connected_components():
+                if comp.id == component_id and conn_name == connection_name:
+                    logger.debug(f"Found node {node_id} for component {component_id[:8]}... {connection_name}")
+                    return node
 
-        # Get the position of the connection
-        connection_points = component.connection_points
-        if connection_name not in connection_points:
-            return None
-
-        position = connection_points[connection_name]
-        return self.get_node_at_position(position)
+        # Log when a node is not found
+        logger.debug(f"No node found for component {component_id[:8]}... {connection_name}")
+        return None
 
     def connect_components_at(self, component1_id, connection1, component2_id, connection2):
         """Connect two components at the specified connection points."""
@@ -278,26 +284,22 @@ class CircuitSimulator:
             return False
 
         # Connect the components in their internal state
-        component1.connect(connection1, component2, connection2)
-        component2.connect(connection2, component1, connection1)
+        success1 = component1.connect(connection1, component2, connection2)
+        success2 = component2.connect(connection2, component1, connection1)
 
-        # Get the positions for both connection points
+        if not (success1 and success2):
+            logger.warning(f"Failed to connect components: internal state update failed")
+            return False
+
+        # Log connection info
+        logger.info(f"Connected {component1.__class__.__name__} {connection1} to {component2.__class__.__name__} {connection2}")
+        logger.info(f"Connected {component1_id}.{connection1} to {component2_id}.{connection2}")
+
+        # Log position differences
         node1_position = connection1_points[connection1]
         node2_position = connection2_points[connection2]
-
-        # Create only a SINGLE node for both connection points
-        # This is the key change - we'll use the first node position for both connections
-        node = self._get_or_create_node(node1_position)
-
-        # Add both components to the same node
-        node.add_component(component1, connection1)
-        node.add_component(component2, connection2)
-
-        logger.info(f"Connected {component1_id}.{connection1} to {component2_id}.{connection2} at node {node.id}")
-
-        # If the positions are different, log a message
         if node1_position != node2_position:
-            logger.info(f"Connected points at different positions: {node1_position} and {node2_position} (using {node1_position} for the node)")
+            logger.info(f"Connected points at different positions: {node1_position} and {node2_position}")
 
         return True
 
@@ -687,44 +689,136 @@ class CircuitSimulator:
 
 
     def build_circuit_from_components(self):
-        """Build the circuit by connecting components at the same position."""
+        """Build the circuit by creating a proper connection graph based on component connections."""
         # Clear existing nodes
         self.nodes = {}
         self.ground_node = None
 
-        # Create nodes for all connection points
-        for component_id, component in self.components.items():
-            connection_points = component.connection_points
-            for connection_name, position in connection_points.items():
-                node = self._get_or_create_node(position)
-                node.add_component(component, connection_name)
+        # First create a mapping of (component_id, connection_name) to a unique node ID
+        # This helps us group all connected points to the same node
+        connection_map = {}
+        connection_groups = {}  # Groups of connected points
+        next_group_id = 0
 
-        # Find the ground node (look for a Ground component)
+        # Step 1: Analyze connections in each component to create groups
+        for component_id, component in self.components.items():
+            # Look at each connection in this component
+            for conn_name, connected_to in component.connected_to.items():
+                # This will be a list of (other_id, other_conn) tuples
+                for other_id, other_conn in connected_to:
+                    # Create keys for both sides of this connection
+                    key1 = (component_id, conn_name)
+                    key2 = (other_id, other_conn)
+
+                    # Check if either is already in a group
+                    group_id1 = connection_map.get(key1)
+                    group_id2 = connection_map.get(key2)
+
+                    if group_id1 is not None and group_id2 is not None:
+                        # Both already have groups - merge if different
+                        if group_id1 != group_id2:
+                            # Merge group2 into group1
+                            for k in list(connection_map.keys()):
+                                if connection_map[k] == group_id2:
+                                    connection_map[k] = group_id1
+                            # Merge the connection lists
+                            if group_id2 in connection_groups:
+                                connections2 = connection_groups.pop(group_id2)
+                                connection_groups[group_id1].extend(connections2)
+                    elif group_id1 is not None:
+                        # Only first has a group - add second to it
+                        connection_map[key2] = group_id1
+                        connection_groups[group_id1].append(key2)
+                    elif group_id2 is not None:
+                        # Only second has a group - add first to it
+                        connection_map[key1] = group_id2
+                        connection_groups[group_id2].append(key1)
+                    else:
+                        # Neither has a group - create new group
+                        new_group_id = f"group_{next_group_id}"
+                        next_group_id += 1
+                        connection_map[key1] = new_group_id
+                        connection_map[key2] = new_group_id
+                        connection_groups[new_group_id] = [key1, key2]
+
+        # Step 2: Add any unconnected terminals as their own groups
+        for component_id, component in self.components.items():
+            for conn_name in component.connections.keys():
+                key = (component_id, conn_name)
+                if key not in connection_map:
+                    # Create a new group for this unconnected terminal
+                    new_group_id = f"group_{next_group_id}"
+                    next_group_id += 1
+                    connection_map[key] = new_group_id
+                    connection_groups[new_group_id] = [key]
+
+        # Step 3: Create nodes from these connection groups
+        for group_id, connections in connection_groups.items():
+            # Create a node for this group
+            node = Node(group_id)
+            self.nodes[group_id] = node
+
+            # Add all connections to this node
+            for comp_id, conn_name in connections:
+                component = self.components.get(comp_id)
+                if component:
+                    node.add_component(component, conn_name)
+
+            logger.info(f"Created node {group_id} with {len(connections)} connections")
+
+        # Step 4: Find ground node
+        # First look for a Ground component
         for component in self.components.values():
             if component.__class__.__name__ == 'Ground':
-                gnd_connection = component.connection_points.get('gnd')
-                if gnd_connection:
-                    self.ground_node = self.get_node_at_position(gnd_connection)
-                    self.ground_node.voltage = 0.0
-                    logger.info(f"Found ground node: {self.ground_node}")
+                # Find which node this ground component is connected to
+                gnd_connection = 'gnd'  # The connection name for ground components
+
+                # Find the node with this component and connection
+                for node_id, node in self.nodes.items():
+                    for comp, conn_name in node.get_connected_components():
+                        if comp.id == component.id and conn_name == gnd_connection:
+                            self.ground_node = node
+                            self.ground_node.voltage = 0.0
+                            logger.info(f"Found ground node from Ground component: {node_id}")
+                            break
+                    if self.ground_node:
+                        break
+                if self.ground_node:
                     break
 
         # If no ground node found, use the negative terminal of a voltage source
         if not self.ground_node:
             for component in self.components.values():
                 if component.__class__.__name__ in ['DCVoltageSource', 'ACVoltageSource']:
-                    neg_connection = component.connection_points.get('neg')
-                    if neg_connection:
-                        self.ground_node = self.get_node_at_position(neg_connection)
-                        self.ground_node.voltage = 0.0
-                        logger.info(f"Using voltage source negative terminal as ground: {self.ground_node}")
+                    # Find the node connected to the negative terminal
+                    neg_connection = 'neg'  # The negative terminal
+
+                    # Find the node with this component and connection
+                    for node_id, node in self.nodes.items():
+                        for comp, conn_name in node.get_connected_components():
+                            if comp.id == component.id and conn_name == neg_connection:
+                                self.ground_node = node
+                                self.ground_node.voltage = 0.0
+                                logger.info(f"Using voltage source negative terminal as ground: {node_id}")
+                                break
+                        if self.ground_node:
+                            break
+                    if self.ground_node:
                         break
 
         # If still no ground node, use the first node
         if not self.ground_node and self.nodes:
             self.ground_node = next(iter(self.nodes.values()))
             self.ground_node.voltage = 0.0
-            logger.info(f"Using {self.ground_node} as default ground node")
+            logger.info(f"Using {self.ground_node.id} as default ground node")
+
+        # SAFETY CHECK: If we still have no ground node (empty circuit), create one
+        if not self.ground_node:
+            node_id = "default_ground"
+            self.nodes[node_id] = Node(node_id)
+            self.ground_node = self.nodes[node_id]
+            self.ground_node.voltage = 0.0
+            logger.warning(f"Created default ground node as no other ground was found")
 
         # Log circuit nodes and components
         logger.info(f"Built circuit with {len(self.nodes)} nodes and {len(self.components)} components")
