@@ -125,3 +125,7 @@ Default settings are stored in `~/.circuit_simulator/config.json` and can be ove
 ## License
 
 This project is open-source and available under the MIT License.
+
+
+---
+*Built with AI assistance from [Claude (Anthropic)](https://claude.com/).*
