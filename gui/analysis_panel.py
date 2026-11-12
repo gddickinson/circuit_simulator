@@ -387,6 +387,16 @@ class MeasurementPanel(QWidget):
 
         # Add a stretch to push everything to the top
         self.measurement_layout.addStretch()
+        self._show_rows()
+
+    def _show_rows(self):
+        """Show labels added to an already visible panel (Qt only shows them on a later event loop pass, and the
+        30 FPS update replaced them before that, so the measurement boxes stayed empty while simulating)."""
+        for layout in self.component_measurements.values():
+            for i in range(layout.count()):
+                item = layout.itemAt(i)
+                if item is not None and item.widget() is not None:
+                    item.widget().show()
 
     def _add_component_measurements(self, component, layout):
         """Add measurements for a component.
@@ -397,17 +407,25 @@ class MeasurementPanel(QWidget):
         """
         component_type = component.__class__.__name__
 
+        overload = component.state.get('overload')
+        if overload:
+            warn = QLabel(f"⚠ {overload}")
+            warn.setStyleSheet("color: #c0392b; font-weight: bold;")
+            warn.setWordWrap(True)
+            layout.addRow("Over rating:", warn)
+
         # Common measurements based on component type
         if component_type in ['Resistor', 'Capacitor', 'Inductor', 'Diode', 'LED', 'Switch']:
-            # Voltages
-            v_p1 = component.state.get('voltages', {}).get('p1', 0.0)
-            v_p2 = component.state.get('voltages', {}).get('p2', 0.0)
-            layout.addRow("Voltage P1:", QLabel(f"{v_p1:.3f} V"))
-            layout.addRow("Voltage P2:", QLabel(f"{v_p2:.3f} V"))
+            # Voltages (diodes and LEDs have anode/cathode terminals, the others p1/p2)
+            t1, t2 = ('anode', 'cathode') if component_type in ('Diode', 'LED') else ('p1', 'p2')
+            v_p1 = component.state.get('voltages', {}).get(t1, 0.0)
+            v_p2 = component.state.get('voltages', {}).get(t2, 0.0)
+            layout.addRow(f"Voltage {t1}:", QLabel(f"{v_p1:.3f} V"))
+            layout.addRow(f"Voltage {t2}:", QLabel(f"{v_p2:.3f} V"))
             layout.addRow("Voltage Drop:", QLabel(f"{abs(v_p1 - v_p2):.3f} V"))
 
             # Current
-            current = component.state.get('currents', {}).get('p1', 0.0)
+            current = component.state.get('currents', {}).get(t1, 0.0)
             if abs(current) >= 1:
                 layout.addRow("Current:", QLabel(f"{current:.3f} A"))
             elif abs(current) >= 1e-3:
@@ -708,6 +726,10 @@ class MeasurementPanel(QWidget):
 
     def update(self):
         """Update the display."""
+        if set(self.component_measurements) != set(self.simulator.components):
+            # components were added, removed or a circuit was loaded: rebuild the groups (was manual Refresh only)
+            self.update_measurements()
+            return
         # Update all measurements
         for component_id, layout in self.component_measurements.items():
             # Get the component
@@ -721,6 +743,7 @@ class MeasurementPanel(QWidget):
 
             # Re-add measurements
             self._add_component_measurements(component, layout)
+        self._show_rows()
 
 class AnalysisPanelWidget(QWidget):
     """Panel for circuit analysis and measurements."""

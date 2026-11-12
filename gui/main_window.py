@@ -10,7 +10,7 @@ import logging
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QAction, QToolBar, QStatusBar, QFileDialog, QMessageBox,
-    QDockWidget, QTabWidget, QLabel, QComboBox, QPushButton, QActionGroup
+    QDockWidget, QTabWidget, QLabel, QComboBox, QPushButton, QActionGroup, QScrollArea, QFrame
 )
 from PyQt5.QtCore import Qt, QSize, QTimer
 from PyQt5.QtGui import QIcon, QKeySequence
@@ -102,27 +102,36 @@ class MainWindow(QMainWindow):
         # Set the central widget
         self.setCentralWidget(self.central_splitter)
 
+    @staticmethod
+    def _scrollable(widget):
+        """Wrap a dock's content in a scroll area so its minimum width no longer squeezes the circuit board."""
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.NoFrame)
+        area.setWidget(widget)
+        return area
+
     def _create_dock_widgets(self):
         """Create the dock widgets (component panel, analysis, debug console)."""
         # Create the component panel dock
         self.component_dock = QDockWidget("Components", self)
         self.component_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.component_panel = ComponentPanelWidget(self.db_manager, self.circuit_board)
-        self.component_dock.setWidget(self.component_panel)
+        self.component_dock.setWidget(self._scrollable(self.component_panel))
         self.addDockWidget(Qt.LeftDockWidgetArea, self.component_dock)
 
         # Create the analysis panel dock
         self.analysis_dock = QDockWidget("Analysis", self)
         self.analysis_dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea)
         self.analysis_panel = AnalysisPanelWidget(self.simulator)
-        self.analysis_dock.setWidget(self.analysis_panel)
+        self.analysis_dock.setWidget(self._scrollable(self.analysis_panel))
         self.addDockWidget(Qt.RightDockWidgetArea, self.analysis_dock)
 
         # Create the debug console dock
         self.debug_dock = QDockWidget("Debug Console", self)
         self.debug_dock.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.RightDockWidgetArea)
         self.debug_console = DebugConsoleWidget(self.simulator)
-        self.debug_dock.setWidget(self.debug_console)
+        self.debug_dock.setWidget(self._scrollable(self.debug_console))
         self.addDockWidget(Qt.BottomDockWidgetArea, self.debug_dock)
 
         # Tabify analysis and debug panels
@@ -130,6 +139,11 @@ class MainWindow(QMainWindow):
 
         # Raise analysis panel to front
         self.analysis_dock.raise_()
+
+        # Give the circuit board most of the width (the docks otherwise squeeze it to a sliver)
+        # (after the first layout pass, when the dock sizes are known)
+        QTimer.singleShot(0, lambda: self.resizeDocks([self.component_dock, self.analysis_dock, self.debug_dock], [300, 420, 420],
+                                                      Qt.Horizontal))
 
     def _create_actions(self):
         """Create actions for menus and toolbars."""

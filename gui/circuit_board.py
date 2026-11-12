@@ -176,7 +176,7 @@ class ComponentGraphicsItem(QGraphicsItem):
 
             # Draw component name
             painter.setFont(QFont("Arial", 8))
-            painter.drawText(-width/2, -height/2, width, height,
+            painter.drawText(QRectF(-width/2, -height/2, width, height),
                             Qt.AlignCenter, component_type)
 
         # Draw connection points
@@ -184,6 +184,19 @@ class ComponentGraphicsItem(QGraphicsItem):
 
         # Draw component values
         self.draw_values(painter, width, height)
+
+        # Over its rating (simulation/transient.py 'overload'): red frame, warning sign and tooltip
+        overload = self.component.state.get('overload')
+        if overload:
+            margin = max(10, self.connection_radius * 2)
+            painter.setPen(QPen(QColor("#E74C3C"), 2.5, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(QRectF(-width/2 - margin/2, -height/2 - margin/2, width + margin, height + margin))
+            painter.setPen(QPen(QColor("#E74C3C"), 1))
+            painter.setFont(QFont("Arial", 9, QFont.Bold))
+            painter.drawText(QRectF(-width/2 - margin, -height/2 - margin, 16, 14), Qt.AlignCenter, "⚠")
+        if self.toolTip() != (f"Over rating: {overload}" if overload else ""):
+            self.setToolTip(f"Over rating: {overload}" if overload else "")
 
         # Draw debug info if enabled
         if self.board.debug_mode:
@@ -538,9 +551,9 @@ class ComponentGraphicsItem(QGraphicsItem):
 
         # Draw labels
         painter.setFont(QFont("Arial", 8))
-        painter.drawText(-5, -radius - 5, "C")
-        painter.drawText(-radius - 10, 5, "B")
-        painter.drawText(-5, radius + 15, "E")
+        painter.drawText(QPointF(-5, -radius - 5), "C")
+        painter.drawText(QPointF(-radius - 10, 5), "B")
+        painter.drawText(QPointF(-5, radius + 15), "E")
 
     def draw_switch(self, painter, width, height):
         """Draw a switch.

@@ -861,6 +861,7 @@ class ComponentPanelWidget(QWidget):
 
         # Coming soon label
         label = QLabel("Coming soon - Integrated Circuits will be available in a future update.")
+        label.setWordWrap(True)  # unwrapped, this one label made the whole panel 560 px wide
         label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)
 
