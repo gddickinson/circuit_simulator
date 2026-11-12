@@ -22,7 +22,7 @@ route('about', () => {
       <code>MAX_ITERATIONS</code> and <code>CONVERGENCE_THRESHOLD</code>).</li>
     <li><b>Ratings</b> (max power, voltage or current of each part, as in the desktop property dialog) never change
       the solution: a part driven past its rating is outlined in red and its readout says by how much.</li>
-    <li><b>Switches</b> are 0.01 Ω closed and 1 GΩ open. Every node has 10<sup>−12</sup> S to ground so a floating
+    <li><b>Switches</b> are 0.01 Ω closed and 1 TΩ open. Every node has 10<sup>−12</sup> S to ground so a floating
       part cannot make the matrix singular; two different voltage sources in parallel are reported as unsolvable.</li>
     <li><b>Ground</b>: every node touching a ground symbol is 0 V. With no ground symbol, the − terminal of the first
       voltage source is the reference.</li>

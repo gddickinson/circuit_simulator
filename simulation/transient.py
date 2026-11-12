@@ -11,7 +11,7 @@ Mirrored in JS by web/static/circuit_engine.js (node-tested against fixtures mad
 
 import math
 
-from simulation.mna import (DEFAULTS, G_OFF, R_BE, R_ON, R_SAT, RATINGS, Netlist, _bjt, initial_state, prop,
+from simulation.mna import (DEFAULTS, G_OFF, R_BE, R_CLOSED, R_ON, R_OPEN, R_SAT, RATINGS, Netlist, _bjt, initial_state, prop,
                             solve_point, source_voltage)
 
 DEFAULT_MAX_STEP = 1e-5
@@ -48,7 +48,7 @@ def readouts(net, st, v, x, h, t, trap=False):
         V = {term: float(v[k]) for term, k in nd.items()}
         I, extra, over = {}, {}, ''
         if ty in ('Resistor', 'Switch'):
-            r = max(float(prop(c, 'resistance')), 1e-6) if ty == 'Resistor' else (0.01 if prop(c, 'state') else 1e9)
+            r = max(float(prop(c, 'resistance')), 1e-6) if ty == 'Resistor' else (R_CLOSED if prop(c, 'state') else R_OPEN)
             i = (V['p1'] - V['p2']) / r
             I = {'p1': i, 'p2': -i}
             if ty == 'Switch':

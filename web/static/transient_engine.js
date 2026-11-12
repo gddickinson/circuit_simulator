@@ -2,7 +2,7 @@
 // new Transient(circuit).advance(T) integrates by T seconds in sub-steps of at most maxStep (default 10 us, and at most
 // 1/50 of any AC period) and returns per-component readouts. Trapezoidal steps, except BE_STEPS backward-Euler steps
 // after a discontinuity (start, edits via discontinuity(), a diode/BJT changing region) to stop trapezoidal ringing.
-import { G_OFF, R_ON, R_SAT, R_BE, DEFAULT_MAX_STEP, Netlist, bjtParams, initialState, prop, solvePoint, sourceVoltage } from './circuit_engine.js';
+import { G_OFF, R_ON, R_SAT, R_BE, R_CLOSED, R_OPEN, DEFAULT_MAX_STEP, Netlist, bjtParams, initialState, prop, solvePoint, sourceVoltage } from './circuit_engine.js';
 
 export const BE_STEPS = 3;
 
@@ -36,7 +36,7 @@ export function readouts(net, st, v, x, h, t, trap = false) {
     const n = name => Number(prop(c, name));
     switch (c.type) {
       case 'Resistor': case 'Switch': {
-        const r = c.type === 'Resistor' ? Math.max(n('resistance'), 1e-6) : (prop(c, 'state') ? 0.01 : 1e9);
+        const r = c.type === 'Resistor' ? Math.max(n('resistance'), 1e-6) : (prop(c, 'state') ? R_CLOSED : R_OPEN);
         const i = (V.p1 - V.p2) / r;
         I = { p1: i, p2: -i };
         if (c.type === 'Switch') { extra.closed = !!prop(c, 'state'); ov = over(i, prop(c, 'max_current'), 'A', 'current'); }

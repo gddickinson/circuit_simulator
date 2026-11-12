@@ -14,7 +14,7 @@ Sign conventions (used everywhere, including the web engine static/mna_engine.js
   * power = sum(v_t * i_t) = power absorbed (negative = delivered);
   * DCCurrentSource pushes 'current' amperes OUT of its pos terminal into the external circuit.
 Models (component defaults match components/*.py):
-  Resistor R; Switch 0.01 ohm closed / 1 Gohm open; Capacitor i = C dv/dt; Inductor v = L di/dt;
+  Resistor R; Switch 0.01 ohm closed / 1 Tohm open; Capacitor i = C dv/dt; Inductor v = L di/dt;
   Diode/LED: off -> 1 nS leak, on -> i = (v - Vf) / 0.1 ohm;
   BJT (npn/pnp): base-emitter like a diode with Vth = vbe_threshold and 1 kohm (as BJT.calculate: ib = (vbe-Vth)/1k),
   active: ic = gain * ib, saturation: vce clamped at vce_saturation through 0.1 ohm.
@@ -49,6 +49,10 @@ RATINGS = {
     'DCCurrentSource': {'max_voltage': 12.0}, 'Switch': {'max_current': 5.0},
 }
 GMIN = 1e-12
+# Switch: 0.01 ohm closed (as Switch.calculate); 1 Tohm open, well below the 1 nS diode leakage so an open switch
+# cannot hold a diode/LED behind it at its forward voltage
+R_CLOSED = 0.01
+R_OPEN = 1e12
 G_OFF = 1e-9
 R_ON = 0.1
 R_BE = 1000.0
@@ -219,7 +223,7 @@ def _assemble(net, st, h, t, trap):
     for c in net.components:
         ty, nd, cid = c['type'], net.nodes[c['id']], c['id']
         if ty in ('Resistor', 'Switch'):
-            r = max(float(prop(c, 'resistance')), 1e-6) if ty == 'Resistor' else (0.01 if prop(c, 'state') else 1e9)
+            r = max(float(prop(c, 'resistance')), 1e-6) if ty == 'Resistor' else (R_CLOSED if prop(c, 'state') else R_OPEN)
             S.g(nd['p1'], nd['p2'], 1.0 / r)
         elif ty == 'Capacitor':  # BE: i = C/h (v - v0); trapezoidal: i = 2C/h (v - v0) - i0
             g = (2.0 if trap else 1.0) * max(float(prop(c, 'capacitance')), 1e-18) / h

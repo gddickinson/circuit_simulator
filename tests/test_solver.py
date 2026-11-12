@@ -95,7 +95,9 @@ def test_switch_controls_led():
     sim = make('switch_circuit')
     run(sim, 2)
     led = by_type(sim, 'LED')[0]
-    assert abs(led.state['currents']['anode']) < 1e-6
+    assert abs(led.state['currents']['anode']) < 1e-9
+    assert not led.state['conducting']
+    assert led.state['voltages']['anode'] < 0.1  # an open switch must not hold the LED at its forward voltage
     sw = by_type(sim, 'Switch')[0]
     sw.toggle()
     run(sim, 2)

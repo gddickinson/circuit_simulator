@@ -21,6 +21,8 @@ export const RATINGS = {
   DCVoltageSource: { max_current: 1.0 }, ACVoltageSource: { max_current: 1.0 }, DCCurrentSource: { max_voltage: 12.0 },
   Switch: { max_current: 5.0 },
 };
+// switch: 0.01 ohm closed, 1 Tohm open (below the 1 nS diode leakage, so an open switch cannot light an LED)
+export const R_CLOSED = 0.01, R_OPEN = 1e12;
 export const GMIN = 1e-12, G_OFF = 1e-9, R_ON = 0.1, R_BE = 1000.0, R_SAT = 0.1;
 // config.MAX_ITERATIONS and config.CONVERGENCE_THRESHOLD of the desktop app (region iteration cap, hysteresis in volts)
 export const MAX_PWL_ITER = 100, REGION_TOL = 1e-6;
@@ -136,7 +138,7 @@ class Stamp {
 export function bjtParams(c) {
   return [String(prop(c, 'type')).toLowerCase() === 'npn' ? 1.0 : -1.0, num(c, 'gain'), num(c, 'vbe_threshold'), num(c, 'vce_saturation')];
 }
-const resistance = c => (c.type === 'Resistor' ? Math.max(num(c, 'resistance'), 1e-6) : (prop(c, 'state') ? 0.01 : 1e9));
+const resistance = c => (c.type === 'Resistor' ? Math.max(num(c, 'resistance'), 1e-6) : (prop(c, 'state') ? R_CLOSED : R_OPEN));
 
 function assemble(net, st, h, t, trap) {
   const n = net.n, m = net.vsources.length, S = new Stamp(n + m);
