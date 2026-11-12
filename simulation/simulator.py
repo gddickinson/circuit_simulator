@@ -625,7 +625,10 @@ class CircuitSimulator:
         start_time = time.time()
 
         # Solve the circuit
-        self.solve_circuit()
+        solve_result = self.solve_circuit()
+        # The MNA solver (simulation/circuit_solver.py) writes every component's state itself; the per-component
+        # calculate() methods are only a fallback when no solver is attached (they would overwrite the solution).
+        solver_updated = isinstance(solve_result, dict) and solve_result.get('states_updated', False)
 
         # Record time taken for circuit solving
         solve_time = time.time() - start_time
@@ -633,11 +636,12 @@ class CircuitSimulator:
         # Update component states
         component_start_time = time.time()
         for component in self.components.values():
-            # Calculate new state
-            state_updates = component.calculate(self, self.time_step)
+            if not solver_updated:
+                # Calculate new state
+                state_updates = component.calculate(self, self.time_step)
 
-            # Apply updates
-            component.apply(state_updates)
+                # Apply updates
+                component.apply(state_updates)
 
             # Record state in history
             for key, value in component.state.items():
