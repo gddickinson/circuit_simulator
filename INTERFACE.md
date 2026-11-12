@@ -30,7 +30,7 @@
 
 ### simulation/
 - `mna.py` -- Qt-free MNA engine: `Netlist` (union-find of `connected_to` into nodes, ground selection), `solve_point()` (stamps, PWL diode/BJT region iteration, `np.linalg.solve`), `TERMINALS`, `DEFAULTS`, `CircuitError`
-- `transient.py` -- `Transient(circuit).advance(T)` backward-Euler sub-steps, `readouts()` (terminal V, current INTO terminal, absorbed power)
+- `transient.py` -- `Transient(circuit).advance(T)` trapezoidal sub-steps with `BE_STEPS` backward-Euler steps after a `discontinuity()`, `readouts()` (terminal V, current INTO terminal, absorbed power, `overload` vs `mna.RATINGS`)
 - `circuit_solver.py` -- `CircuitSolver.solve_circuit()`: builds the circuit dict from the simulator, advances one `time_step`, writes component states and node voltages back
 - `physics.py` -- `Physics` static methods (Ohm's law, diode I-V, RLC, etc.)
 - `simulator.py` -- `CircuitSimulator` (nodes, time-stepping, event dispatch; skips component `calculate()` when the solver wrote the states)
@@ -59,9 +59,9 @@
 - `catalog.py` -- component catalog (connections, defaults, editable props/units) and the `examples/basic_circuits.py` circuits as `.circuit` dicts with a tidy board layout
 - `static/` -- ES modules, no build step:
   - `circuit_engine.js` (port of `mna.py`), `transient_engine.js` (port of `transient.py`), `circuit_engine.test.mjs` (node test vs `tests/fixtures/engine_fixture.json`)
-  - `circuit_doc.js` (circuit document in `.circuit` format: add/move/rotate/connect, load/save), `units.js` (SI parse/format)
+  - `circuit_doc.js` (circuit document in `.circuit` format: add/move/rotate/connect, load/save) + `circuit_doc.test.mjs`, `units.js` (SI parse/format)
   - `schematic.js` (SVG editor), `symbols.js` (component symbols), `scope.js` (oscilloscope canvas)
-  - `sim.js` + `sim_panel.js` (simulator page), `home.js`, `examples.js`, `about.js`, `main.js`, `core.js` (router, shared kit), `static_api.js` (static-site data layer)
+  - `sim.js` (simulator page: run loop, undo/redo history, save/load) + `sim_panel.js` (palette, property editor, readouts), `home.js`, `examples.js`, `about.js`, `main.js`, `core.js` (router, shared kit), `static_api.js` (static-site data layer)
 
 ## Module Connections
 

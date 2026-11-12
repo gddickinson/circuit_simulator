@@ -12,8 +12,11 @@ An interactive electronic circuit simulator built with Python and PyQt5. Place c
 - Multiple board modes for placing, wiring, and selecting
 
 ### Real-Time Simulation
-- Modified Nodal Analysis (MNA) circuit solver (`simulation/mna.py`, `simulation/transient.py`): backward-Euler
-  capacitor/inductor models in sub-steps of at most 10 µs inside each frame, piecewise-linear diodes, LEDs and BJTs
+- Modified Nodal Analysis (MNA) circuit solver (`simulation/mna.py`, `simulation/transient.py`): trapezoidal
+  capacitor/inductor models in sub-steps of at most 10 µs inside each frame (backward-Euler steps right after a
+  switch flip or other sudden change, so nothing rings), piecewise-linear diodes, LEDs and BJTs
+- Parts driven past their rating (max power, voltage or current) are framed in red with the reason; the solution is
+  never clamped
 - Configurable frame timestep (default 1ms of simulated time per update)
 - Live voltage and current visualization with color-coded feedback
 - 30 FPS simulation update loop
@@ -130,8 +133,9 @@ Default settings are stored in `~/.circuit_simulator/config.json` and can be ove
 
 The same simulator runs in the browser: <https://gddickinson.github.io/circuit_simulator/> (GitHub Pages, no server
 needed). Draw a schematic on the grid (place, drag, rotate, delete, wire terminal to terminal), edit values with SI
-units (`4.7k`, `10u`, `2.2 MΩ`), press Run and read live voltages and currents on every part, with wires coloured by
-node voltage and an oscilloscope plotting up to four probes. The seven example circuits of
+units (`4.7k`, `10u`, `2.2 MΩ`, `500 mA`), undo/redo (Ctrl/⌘+Z), press Run and read live voltages and currents on
+every part, with wires coloured by node voltage, over-rated parts flagged, and an oscilloscope plotting up to four
+probes. The seven example circuits of
 `examples/basic_circuits.py` are included, and circuits save to and open from the desktop app's `.circuit` format.
 
 ![Simulator: AC source into an RC low-pass, with the oscilloscope](docs/img/sim_ac.png)
@@ -139,7 +143,7 @@ node voltage and an oscilloscope plotting up to four probes. The seven example c
 ![Example circuits](docs/img/examples.png)
 
 The engine in the browser (`web/static/circuit_engine.js`, `transient_engine.js`) is a port of `simulation/mna.py` and
-`simulation/transient.py`; a node test replays twelve circuits and matches every terminal voltage and current of the
+`simulation/transient.py`; a node test replays fourteen circuits and matches every terminal voltage and current of the
 Python engine to 1 part in 10^9 (in practice ~1e-13).
 
 ### Run the web app

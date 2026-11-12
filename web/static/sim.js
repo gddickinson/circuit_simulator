@@ -37,6 +37,7 @@ route('sim', async (args, query) => {
     <section class="boardwrap">
       <div class="bar runbar">
         <button id="b-run">Run</button><button class="alt" id="b-step">Step</button><button class="alt" id="b-reset">Reset</button>
+        <button class="alt" id="b-undo" title="Undo (Ctrl/⌘+Z)" disabled>Undo</button><button class="alt" id="b-redo" title="Redo (Ctrl/⌘+Shift+Z)" disabled>Redo</button>
         <label for="spd" class="inl">Simulated time per frame</label>
         <select id="spd">${SPEEDS.map(([v, l]) => `<option value="${v}"${v === 1e-3 ? ' selected' : ''}>${l}</option>`).join('')}</select>
         <span class="mono small" id="clock">t = 0 s</span>
@@ -57,7 +58,7 @@ route('sim', async (args, query) => {
   const status = msg => { $('#status').textContent = msg; };
   const ed = new Schematic($('#board'), doc, {
     onSelect: () => showSel(), onStatus: status,
-    onChange: kind => { S.dirty = true; if (kind !== 'move') rebuild(); showSel(); },
+    onChange: kind => { S.dirty = true; if (kind !== 'move') rebuild(); record(); showSel(); },
   });
 
   // Rebuild the engine after an edit, keeping time and the dynamic state (capacitor v, inductor i, diode/BJT region)
@@ -133,7 +134,7 @@ route('sim', async (args, query) => {
     const c = sel?.kind === 'comp' && doc.components[sel.id];
     if (!c) { host.innerHTML = '<p class="mute small">Select a component to edit its values and read its voltages and currents.</p>'; return; }
     renderProps(host, c, doc.catalog[c.type], {
-      onEdit: (name, val) => { c.properties[name] = val; S.dirty = true; rebuild(); ed.render(liveInfo()); },
+      onEdit: (name, val) => { c.properties[name] = val; S.dirty = true; rebuild(); record(); ed.render(liveInfo()); },
       onRotate: () => ed.rotateSelected(), onDelete: () => ed.deleteSelected(), onToggle: () => ed.toggleSwitch(c.id),
     });
     renderLive($('#pp-live'), c, S.readouts?.[c.id], addProbe);
@@ -146,11 +147,11 @@ route('sim', async (args, query) => {
     for (const [id, kind] of PRESET[name] || []) if (doc.components[id]) scope.add(makeProbe(doc.components[id], kind));
     const [spd, win] = PACE[name] || [1e-3, 0.2];
     $('#spd').value = String(spd); $('#win').value = String(win);
-    legend(); ed.select(null); reset(); setRunning(true);
+    legend(); ed.select(null); reset(); resetHistory(); setRunning(true);
   }
 
   $('#ex-sel').onchange = e => { if (e.target.value) go(`#/sim?ex=${e.target.value}`); };
-  $('#b-new').onclick = () => { doc.clear(); scope.traces = []; legend(); $('#ex-note').textContent = ''; setRunning(false); ed.select(null); reset(); };
+  $('#b-new').onclick = () => { doc.clear(); scope.traces = []; legend(); $('#ex-note').textContent = ''; setRunning(false); ed.select(null); reset(); resetHistory(); };
   $('#b-save').onclick = () => download('circuit.circuit', JSON.stringify(doc.toFile(S.tr?.t || 0), null, 2), 'application/json');
   $('#b-load').onclick = () => $('#f-load').click();
   $('#f-load').onchange = async e => {
@@ -158,7 +159,7 @@ route('sim', async (args, query) => {
     if (!f) return;
     try {
       const skipped = doc.load(JSON.parse(await f.text()));
-      scope.traces = []; legend(); ed.select(null); reset();
+      scope.traces = []; legend(); ed.select(null); reset(); resetHistory();
       $('#ex-note').textContent = `Opened ${f.name}${skipped ? ` (${skipped} unknown component(s) skipped)` : ''}.`;
     } catch (err) { status(`Could not open ${f.name}: ${err.message}`); }
     e.target.value = '';
@@ -166,15 +167,43 @@ route('sim', async (args, query) => {
   $('#b-run').onclick = () => setRunning(!S.running);
   $('#b-step').onclick = () => { setRunning(false); stepOnce(); tick(0); };
   $('#b-reset').onclick = () => reset();
+
+  // Undo / redo: snapshots of the components (positions, values, wires) after every edit
+  const hist = { undo: [], redo: [], snap: '' };
+  const snapshot = () => JSON.stringify(doc.components);
+  function undoButtons() { $('#b-undo').disabled = !hist.undo.length; $('#b-redo').disabled = !hist.redo.length; }
+  function resetHistory() { hist.undo = []; hist.redo = []; hist.snap = snapshot(); undoButtons(); }
+  function record() {
+    const now = snapshot();
+    if (now === hist.snap) return;
+    hist.undo.push(hist.snap); if (hist.undo.length > 200) hist.undo.shift();
+    hist.redo = []; hist.snap = now; undoButtons();
+  }
+  function travel(from, to) {
+    if (!from.length) return;
+    to.push(hist.snap); hist.snap = from.pop();
+    doc.components = JSON.parse(hist.snap);
+    ed.pending = null; ed.select(null); rebuild(); ed.render(liveInfo()); undoButtons();
+    status(from === hist.undo ? 'Undone.' : 'Redone.');
+  }
+  $('#b-undo').onclick = () => travel(hist.undo, hist.redo);
+  $('#b-redo').onclick = () => travel(hist.redo, hist.undo);
+  const onKey = ev => {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.target.closest?.('input, select, textarea')) return;
+    const k = ev.key.toLowerCase();
+    if (k === 'z' && !ev.shiftKey) { travel(hist.undo, hist.redo); ev.preventDefault(); }
+    else if ((k === 'z' && ev.shiftKey) || k === 'y') { travel(hist.redo, hist.undo); ev.preventDefault(); }
+  };
+  document.addEventListener('keydown', onKey);
   $('#win').onchange = () => tick(0);
   for (const b of app().querySelectorAll('.pal')) b.onclick = () => ed.setPlace(b.dataset.type);
   const chk = $('#b-check');
   if (chk) chk.onclick = () => checkPython(doc, +$('#spd').value, status);
 
-  if (exName) await loadExample(exName); else reset();
+  if (exName) await loadExample(exName); else { reset(); resetHistory(); }
   let f = 0;
   const stop = animate(() => tick(++f));
-  onLeave(() => { stop(); ed.destroy(); });
+  onLeave(() => { stop(); ed.destroy(); document.removeEventListener('keydown', onKey); });
 });
 
 // Local app only: run 20 frames in the Python engine (POST /api/simulate) and in JS, report the largest difference.

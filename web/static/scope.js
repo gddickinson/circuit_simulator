@@ -79,6 +79,11 @@ export class Scope {
       ctx.stroke();
     }
     ctx.font = '11px ui-monospace, Menlo, monospace'; ctx.fillStyle = '#8fb8a6';
+    if (!this.traces.length) {
+      ctx.textAlign = 'center';
+      ctx.fillText(w < 520 ? 'No probes: select a part, then Scope' : 'No probes: select a part, then "Scope: V across" or "Scope: current"', w / 2, top + ph / 2 - 8);
+      ctx.textAlign = 'left';
+    }
     const scaleTxt = Object.entries(sc).map(([u, d]) => `${formatValue(d, u)}/div`).join('  ');
     ctx.fillText(`${formatValue(this.window / 10, 's')}/div  ${scaleTxt}`, padL + 2, h - 4);
     ctx.textAlign = 'right';

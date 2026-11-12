@@ -8,13 +8,14 @@ export const G = 20, COLS = 44, ROWS = 24;
 const NS = 'http://www.w3.org/2000/svg';
 const VALUE_KEY = { Resistor: ['resistance', 'Ω'], Capacitor: ['capacitance', 'F'], Inductor: ['inductance', 'H'],
   DCVoltageSource: ['voltage', 'V'], ACVoltageSource: ['amplitude', 'V'], DCCurrentSource: ['current', 'A'],
-  Diode: ['forward_voltage', 'V'], LED: ['forward_voltage', 'V'], BJT: ['gain', ''] };
+  BJT: ['gain', ''] };
 
 export function valueLabel(c) {
   const p = c.properties;
   if (c.type === 'ACVoltageSource') return `${formatValue(+p.amplitude, 'V')} ${formatValue(+p.frequency, 'Hz')}`;
   if (c.type === 'BJT') return `${String(p.type || 'npn').toUpperCase()} β${p.gain}`;
   if (c.type === 'Switch') return p.state ? 'closed' : 'open';
+  if (c.type === 'Diode' || c.type === 'LED') return `Vf ${formatValue(Number(p.forward_voltage ?? (c.type === 'LED' ? 2 : 0.7)), 'V')}`;
   const k = VALUE_KEY[c.type];
   return k ? formatValue(Number(p[k[0]]), k[1]) : '';
 }
@@ -84,7 +85,7 @@ export class Schematic {
         const id = t.dataset.id, c = this.doc.components[id], [px, py] = this.point(ev);
         this.select({ kind: 'comp', id });
         this.drag = { id, dx: c.position[0] - px, dy: c.position[1] - py, moved: false };
-        svg.setPointerCapture(ev.pointerId);
+        try { svg.setPointerCapture(ev.pointerId); } catch { /* synthetic or already-released pointer */ }
         ev.preventDefault();
         return;
       }
@@ -201,13 +202,16 @@ export class Schematic {
       const tp = Object.values(doc.terminals(c.id));
       const vertical = c.type !== 'Ground' && Math.max(...tp.map(q => q[1])) - Math.min(...tp.map(q => q[1]))
         > Math.max(...tp.map(q => q[0])) - Math.min(...tp.map(q => q[0]));
-      const lx = (x + (vertical ? 1.6 : 0)) * G, ly = (y + (vertical ? 0.3 : -1.1)) * G;
-      parts.push(`<text class="val" x="${lx}" y="${ly}" text-anchor="${vertical ? 'start' : 'middle'}">${esc(valueLabel(c))}</text>`);
+      // labels go on the side with no terminal (a BJT's base, for instance, would otherwise run through them)
+      const left = vertical && tp.some(q => q[0] > x);
+      const lx = (x + (vertical ? (left ? -1.6 : 1.6) : 0)) * G, ly = (y + (vertical ? 0.3 : -1.1)) * G;
+      const anchor = vertical ? (left ? 'end' : 'start') : 'middle';
+      parts.push(`<text class="val" x="${lx}" y="${ly}" text-anchor="${anchor}">${esc(valueLabel(c))}</text>`);
       if (r && c.type !== 'Ground') {
         const [vt, it] = readoutTerms(c.type);
         const across = r.voltages[vt[0]] - r.voltages[vt[1]];
-        const txt = `${formatValue(across, 'V')} · ${formatValue(r.currents[it], 'A')}`;
-        parts.push(`<text class="live" x="${lx}" y="${ly + (vertical ? 13 : 2.3 * G)}" text-anchor="${vertical ? 'start' : 'middle'}">${esc(txt)}</text>`);
+        const txt = `${formatValue(across, 'V')} · ${formatValue(r.currents[it], 'A')}${over ? ' ⚠ over rating' : ''}`;
+        parts.push(`<text class="live${over ? ' over' : ''}" x="${lx}" y="${ly + (vertical ? 13 : 2.3 * G)}" text-anchor="${anchor}">${esc(txt)}${over ? `<title>${esc(over)}</title>` : ''}</text>`);
       }
     }
     parts.push('</g><g class="terms">');
@@ -215,6 +219,8 @@ export class Schematic {
       for (const [term, [tx, ty]] of Object.entries(doc.terminals(c.id))) {
         const on = this.pending && this.pending[0] === c.id && this.pending[1] === term;
         const linked = (c.connected_to[term] || []).length > 0;
+        // a larger transparent circle under each terminal makes it easy to hit with a finger or on a small board
+        parts.push(`<circle class="term-hit" data-kind="term" data-id="${esc(c.id)}" data-term="${term}" cx="${tx * G}" cy="${ty * G}" r="9"/>`);
         parts.push(`<circle class="term${on ? ' on' : ''}${linked ? ' linked' : ''}" data-kind="term" data-id="${esc(c.id)}" data-term="${term}" cx="${tx * G}" cy="${ty * G}" r="${linked ? 3.5 : 5}"><title>${esc(`${c.id}.${term}`)}${r0(R, c.id, term)}</title></circle>`);
       }
     }

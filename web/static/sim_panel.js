@@ -27,7 +27,8 @@ function propInput(c, p, defaults) {
   if (p.unit === 'bool') {
     return `<label class="chk"><input type="checkbox" id="${id}" data-prop="${p.name}"${v ? ' checked' : ''}> ${esc(p.label)}</label>`;
   }
-  const shown = v === undefined ? '' : (p.unit && p.unit !== '°' ? formatValue(Number(v), '', 6).trim() : String(v));
+  // shown with its unit ("500 mA", "1 kΩ"); parseValue accepts the unit back
+  const shown = v === undefined ? '' : (p.unit && p.unit !== '°' ? formatValue(Number(v), p.unit, 6) : String(v));
   return `<label for="${id}">${esc(p.label)}${p.unit ? ` <span class="mute">(${esc(p.unit)})</span>` : ''}</label>
     <input id="${id}" data-prop="${p.name}" data-unit="${esc(p.unit)}" value="${esc(shown)}" inputmode="decimal" autocomplete="off">`;
 }

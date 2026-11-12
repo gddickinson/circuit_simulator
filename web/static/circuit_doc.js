@@ -19,7 +19,7 @@ export function pyRound(x) {
 // Rotated, rounded connection offset (BaseComponent._rotate_point) for a rotation in degrees.
 export function rotateOffset([x, y], deg) {
   const r = deg * Math.PI / 180, c = Math.round(Math.cos(r)), s = Math.round(Math.sin(r));
-  return [pyRound(x * c - y * s), pyRound(x * s + y * c)];
+  return [pyRound(x * c - y * s) + 0, pyRound(x * s + y * c) + 0];  // + 0 turns -0 into 0
 }
 
 export class CircuitDoc {

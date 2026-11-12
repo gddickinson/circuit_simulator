@@ -26,10 +26,11 @@ main:has(.sim) { max-width:1500px; }
 .sym .body, .board .body { fill:rgba(5,6,12,.9); }
 .sym .fillst, .board .fillst { fill:#dfe8ff; }
 .sym .glow { stroke:none; }
-.board-stage { background:#03050b; touch-action:none; }
+.board-stage { background:#03050b; touch-action:pan-x pan-y; }
+.board .comp, .board .term-hit { touch-action:none; }  /* drag parts, but let the board scroll on a phone */
 .board { display:block; width:100%; height:auto; user-select:none; -webkit-user-select:none; }
 .board:focus { outline:none; } .board:focus-visible { outline:2px solid var(--accent3); }
-.board-stage { background-image:radial-gradient(circle, rgba(127,141,176,.28) 1px, transparent 1.2px);
+.board { background-image:radial-gradient(circle, rgba(127,141,176,.28) 1px, transparent 1.2px);
   background-size:calc(100% / 44) calc(100% / 24); }
 .board .bg { fill:transparent; }
 .board .comp { cursor:grab; }
@@ -41,11 +42,14 @@ main:has(.sim) { max-width:1500px; }
 .board .wire { fill:none; stroke-width:2.2; stroke-linejoin:round; }
 .board .wire.sel { stroke-width:3.2; filter:drop-shadow(0 0 4px var(--accent)); }
 .board .wire-hit { fill:none; stroke:transparent; stroke-width:12; cursor:pointer; }
-.board .term { fill:#03050b; stroke:var(--accent3); stroke-width:1.6; cursor:crosshair; }
+.board .term-hit { fill:transparent; stroke:none; cursor:crosshair; }
+.board .term { pointer-events:none; fill:#03050b; stroke:var(--accent3); stroke-width:1.6; cursor:crosshair; }
 .board .term.linked { fill:var(--accent3); }
-.board .term:hover, .board .term.on { fill:var(--accent); stroke:var(--accent); r:6; }
+.board .term-hit:hover + .term, .board .term.on { fill:var(--accent); stroke:var(--accent); r:6; }
 .board .val { fill:#c6d4ee; font:11px var(--mono); pointer-events:none; }
 .board .live { fill:var(--accent); font:600 10.5px var(--mono); pointer-events:none; }
+.board .live.over { fill:var(--bad); pointer-events:auto; }
+.board .comp.over { filter:drop-shadow(0 0 5px var(--bad)); }
 .board .rubber { stroke:var(--accent); stroke-dasharray:4 3; stroke-width:1.5; pointer-events:none; }
 .board.placing { cursor:copy; }
 .runbar #clock { margin-left:auto; color:var(--accent); }
@@ -76,4 +80,7 @@ main:has(.sim) { max-width:1500px; }
   .side-pal .palette { grid-template-columns:repeat(4, 1fr); }
   .runbar #clock { margin-left:0; }
   #scope { height:180px; }
+  /* keep board cells finger-sized: the board scrolls sideways inside its frame instead of shrinking */
+  .board-stage { overflow-x:auto; }
+  .board-stage .board { width:700px; max-width:none; }
 }

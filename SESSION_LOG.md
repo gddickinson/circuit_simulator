@@ -28,3 +28,27 @@ with the desktop app.
 **Not done / open:** see the "needs George's decision" list in the web-interface report: diode/LED/BJT current
 limiting (the old component code clamped reported current at `max_current`; the solver now reports an over-current
 flag instead), and `CONVERGENCE_THRESHOLD`/`MAX_ITERATIONS` in config.py are unused by the new solver.
+
+## 2026-11-11 (later) — George: "fix the circuit app and any other problems"
+
+**Engine (Python + JS, fixtures regenerated, JS = Python to 2e-13 on 14 circuits):**
+- Trapezoidal integration with 3 backward-Euler steps after any discontinuity (start, edit/switch flip, diode/BJT
+  region change): RC/RL error at one time constant ~1e-5 (was ~1 %); no ringing after a switch shorts a capacitor
+  (`tests/test_integration_accuracy.py`, including a guard that plain trapezoidal would ring).
+- Region iteration uses `config.MAX_ITERATIONS` (cap) and `config.CONVERGENCE_THRESHOLD` (hysteresis, volts).
+- Ratings: real current kept, parts over max power/voltage/current flagged `overload` with the reason (web: red glow
+  + "⚠ over rating"; desktop: red dashed frame, ⚠, tooltip, red row in Measurements).
+- Open switch 1 TΩ (was 1 GΩ, which held the LED behind an open switch at 2 V).
+
+**Desktop GUI (checked offscreen on every example):** BJT painting crashed every frame (float args to drawText);
+Measurements stayed empty while running (rows never shown, only built on Refresh); diode/LED rows read p1/p2 (always
+0); one unwrapped label + the debug console made the docks 560/700 px wide so the board was ~75 px; solver
+iteration count always 0 in the status bar.
+
+**Web editor (Playwright on the live site and the local build):** every example and five circuits built from scratch
+(divider, RC, LED+R, BJT switch saturated/active, AC RC at the corner frequency) match hand values; rotation, delete,
+wiring, units k/m/µ/Ω, scope, save→load all exercised. Fixed: undo/redo added (buttons + Ctrl/⌘+Z/Shift+Z/Y);
+property inputs show units ("500 mA"); diode/LED labels say "Vf"; BJT labels no longer sit on the base wire; BJT
+example layout no longer runs a wire through a resistor; empty-scope hint; bigger terminal hit areas and a board
+that scrolls sideways on phones instead of shrinking to 8 px cells; stray console errors from pointer capture.
+Tests: pytest 75 passed; node engine + circuit_doc tests ok.
