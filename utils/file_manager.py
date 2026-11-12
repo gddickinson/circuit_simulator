@@ -376,6 +376,11 @@ class FileManager:
         Returns:
             Component class name or None if unknown
         """
+        # Files written since the 'type' field was added name the class directly
+        if data.get('type') in ('Resistor', 'Capacitor', 'Inductor', 'Ground', 'DCVoltageSource',
+                                'ACVoltageSource', 'DCCurrentSource', 'Diode', 'LED', 'BJT', 'Switch'):
+            return data['type']
+
         # Extract component ID to determine type
         component_id = data.get('id', '')
 

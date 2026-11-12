@@ -292,6 +292,7 @@ class BaseComponent(ABC):
         """
         return {
             'id': self.id,
+            'type': self.__class__.__name__,  # class name, so components without telltale properties reload
             'component_id': self.component_id,
             'position': self.position,
             'rotation': self.rotation,
