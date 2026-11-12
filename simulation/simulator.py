@@ -677,7 +677,7 @@ class CircuitSimulator:
 
         # Update statistics
         self.stats = {
-            'iterations': 0,  # This will be set by the solver
+            'iterations': solve_result.get('iterations', 0) if isinstance(solve_result, dict) else 0,
             'solve_time': solve_time,
             'component_update_time': component_update_time,
             'node_update_time': node_update_time,

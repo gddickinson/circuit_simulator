@@ -15,7 +15,15 @@ export const DEFAULTS = {
   Diode: { forward_voltage: 0.7, max_current: 1.0 }, LED: { forward_voltage: 2.0, max_current: 0.02, color: 'red' },
   BJT: { type: 'npn', gain: 100, vbe_threshold: 0.7, vce_saturation: 0.2, max_collector_current: 0.5 },
 };
-export const GMIN = 1e-12, G_OFF = 1e-9, R_ON = 0.1, R_BE = 1000.0, R_SAT = 0.1, MAX_PWL_ITER = 60;
+// Ratings: flagged as 'overload' when exceeded, never used to change the solution (as simulation/mna.py RATINGS).
+export const RATINGS = {
+  Resistor: { max_power: 0.25 }, Capacitor: { max_voltage: 50.0 }, Inductor: { max_current: 1.0 },
+  DCVoltageSource: { max_current: 1.0 }, ACVoltageSource: { max_current: 1.0 }, DCCurrentSource: { max_voltage: 12.0 },
+  Switch: { max_current: 5.0 },
+};
+export const GMIN = 1e-12, G_OFF = 1e-9, R_ON = 0.1, R_BE = 1000.0, R_SAT = 0.1;
+// config.MAX_ITERATIONS and config.CONVERGENCE_THRESHOLD of the desktop app (region iteration cap, hysteresis in volts)
+export const MAX_PWL_ITER = 100, REGION_TOL = 1e-6;
 export const DEFAULT_MAX_STEP = 1e-5;
 
 export class CircuitError extends Error {}
@@ -36,7 +44,8 @@ export function componentType(d) {
   return null;
 }
 
-export const prop = (c, name) => (name in c.properties ? c.properties[name] : DEFAULTS[c.type][name]);
+export const prop = (c, name) => (name in c.properties ? c.properties[name]
+  : name in DEFAULTS[c.type] ? DEFAULTS[c.type][name] : RATINGS[c.type]?.[name]);
 const num = (c, name) => Number(prop(c, name));
 
 export class Netlist {
@@ -99,8 +108,8 @@ export function sourceVoltage(c, t) {
 export function initialState(net) {
   const st = {};
   for (const c of net.components) {
-    if (c.type === 'Capacitor') st[c.id] = { v: 0.0 };
-    else if (c.type === 'Inductor') st[c.id] = { i: 0.0 };
+    if (c.type === 'Capacitor') st[c.id] = { v: 0.0, i: 0.0 };
+    else if (c.type === 'Inductor') st[c.id] = { i: 0.0, v: 0.0 };
     else if (c.type === 'Diode' || c.type === 'LED') st[c.id] = { on: false };
     else if (c.type === 'BJT') st[c.id] = { region: 'cutoff' };
   }
@@ -129,15 +138,21 @@ export function bjtParams(c) {
 }
 const resistance = c => (c.type === 'Resistor' ? Math.max(num(c, 'resistance'), 1e-6) : (prop(c, 'state') ? 0.01 : 1e9));
 
-function assemble(net, st, h, t) {
+function assemble(net, st, h, t, trap) {
   const n = net.n, m = net.vsources.length, S = new Stamp(n + m);
   for (let k = 1; k <= n; k++) S.A[k - 1][k - 1] += GMIN;
   for (const c of net.components) {
     const nd = net.nodes[c.id], s0 = st[c.id];
     switch (c.type) {
       case 'Resistor': case 'Switch': S.g(nd.p1, nd.p2, 1.0 / resistance(c)); break;
-      case 'Capacitor': { const g = Math.max(num(c, 'capacitance'), 1e-18) / h; S.g(nd.p1, nd.p2, g); S.i(nd.p2, nd.p1, g * s0.v); break; }
-      case 'Inductor': { const g = h / Math.max(num(c, 'inductance'), 1e-15); S.g(nd.p1, nd.p2, g); S.i(nd.p1, nd.p2, s0.i); break; }
+      case 'Capacitor': {  // BE: i = C/h (v - v0); trapezoidal: i = 2C/h (v - v0) - i0
+        const g = (trap ? 2.0 : 1.0) * Math.max(num(c, 'capacitance'), 1e-18) / h;
+        S.g(nd.p1, nd.p2, g); S.i(nd.p2, nd.p1, g * s0.v + (trap ? s0.i : 0.0)); break;
+      }
+      case 'Inductor': {  // BE: i = i0 + h/L v; trapezoidal: i = i0 + h/2L (v + v0)
+        const g = h / ((trap ? 2.0 : 1.0) * Math.max(num(c, 'inductance'), 1e-15));
+        S.g(nd.p1, nd.p2, g); S.i(nd.p1, nd.p2, s0.i + (trap ? g * s0.v : 0.0)); break;
+      }
       case 'DCCurrentSource': S.i(nd.neg, nd.pos, num(c, 'current')); break;
       case 'Diode': case 'LED':
         if (s0.on) { const g = 1.0 / R_ON; S.g(nd.anode, nd.cathode, g); S.i(nd.cathode, nd.anode, g * num(c, 'forward_voltage')); }
@@ -198,28 +213,30 @@ function updateRegions(net, st, v) {
     const nd = net.nodes[c.id], s0 = st[c.id];
     if (c.type === 'Diode' || c.type === 'LED') {
       const vd = v[nd.anode] - v[nd.cathode], vf = num(c, 'forward_voltage');
-      const on = s0.on ? (vd - vf) / R_ON > 0 : vd > vf;
+      const on = s0.on ? vd > vf - REGION_TOL : vd > vf + REGION_TOL;
       if (on !== s0.on) { s0.on = on; changed = true; }
     } else if (c.type === 'BJT') {
       const [s, beta, vth, vsat] = bjtParams(c);
       const vbe = s * (v[nd.base] - v[nd.emitter]), vce = s * (v[nd.collector] - v[nd.emitter]);
       const ib = (vbe - vth) / R_BE;
       let nw;
-      if (ib <= 0) nw = 'cutoff';
-      else if (s0.region === 'saturation') nw = (vce - vsat) / R_SAT > beta * ib ? 'active' : 'saturation';
-      else nw = vce < vsat ? 'saturation' : 'active';
+      if (s0.region === 'cutoff') nw = vbe <= vth + REGION_TOL ? 'cutoff' : (vce < vsat ? 'saturation' : 'active');
+      else if (vbe < vth - REGION_TOL) nw = 'cutoff';
+      else if (s0.region === 'saturation') nw = vce - vsat > R_SAT * beta * ib + REGION_TOL ? 'active' : 'saturation';
+      else nw = vce < vsat - REGION_TOL ? 'saturation' : 'active';
       if (nw !== s0.region) { s0.region = nw; changed = true; }
     }
   }
   return changed;
 }
 
-// One backward-Euler step ending at time t; iterates PWL regions. Returns { v, x, iterations, converged }.
-export function solvePoint(net, st, h, t) {
+// One step of length h ending at time t (trapezoidal if trap, else backward Euler); iterates PWL regions.
+// Returns { v, x, iterations, converged }; iterations > 1 means a device changed region during the step.
+export function solvePoint(net, st, h, t, trap = false) {
   const size = net.n + net.vsources.length;
   let v, x;
   for (let it = 1; it <= MAX_PWL_ITER; it++) {
-    const S = assemble(net, st, h, t);
+    const S = assemble(net, st, h, t, trap);
     if (size === 0) return { v: [0.0], x: [], iterations: it, converged: true };
     x = solveLinear(S.A, S.b);
     if (!x.every(Number.isFinite)) throw new CircuitError('circuit has no finite solution');

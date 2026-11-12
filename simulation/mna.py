@@ -2,8 +2,10 @@
 Circuit Simulator - Modified Nodal Analysis engine (Qt-free, pure NumPy)
 -----------------------------------------------------------------------
 Solves a circuit given in the saved-file format ({'components': {id: {'type', 'properties', 'connected_to', ...}}})
-by Modified Nodal Analysis with backward-Euler companion models for capacitors and inductors and piecewise-linear
-(PWL) models for diodes, LEDs and BJTs, iterated until every device's region is self-consistent.
+by Modified Nodal Analysis with trapezoidal (or, right after a discontinuity, backward-Euler) companion models for
+capacitors and inductors and piecewise-linear (PWL) models for diodes, LEDs and BJTs, iterated until every device's
+region is self-consistent: at most config.MAX_ITERATIONS passes, and a device only changes region when the solution
+violates its current region by more than config.CONVERGENCE_THRESHOLD volts (hysteresis against chattering).
 
 Unknowns x = [node voltages (ground excluded) | voltage-source branch currents]; A x = b.
 Sign conventions (used everywhere, including the web engine static/mna_engine.js which mirrors this file):
@@ -23,6 +25,8 @@ import math
 
 import numpy as np
 
+import config
+
 TERMINALS = {
     'Resistor': ('p1', 'p2'), 'Capacitor': ('p1', 'p2'), 'Inductor': ('p1', 'p2'), 'Switch': ('p1', 'p2'),
     'Ground': ('gnd',), 'DCVoltageSource': ('pos', 'neg'), 'ACVoltageSource': ('pos', 'neg'),
@@ -37,12 +41,20 @@ DEFAULTS = {
     'LED': {'forward_voltage': 2.0, 'max_current': 0.02, 'color': 'red'},
     'BJT': {'type': 'npn', 'gain': 100, 'vbe_threshold': 0.7, 'vce_saturation': 0.2, 'max_collector_current': 0.5},
 }
+# Ratings (desktop defaults: components/*.py get_property(..., default) and gui/component_panel.py). They do not
+# change the solution; a part driven past its rating is flagged 'overload' (shown as over rating / burnt out).
+RATINGS = {
+    'Resistor': {'max_power': 0.25}, 'Capacitor': {'max_voltage': 50.0}, 'Inductor': {'max_current': 1.0},
+    'DCVoltageSource': {'max_current': 1.0}, 'ACVoltageSource': {'max_current': 1.0},
+    'DCCurrentSource': {'max_voltage': 12.0}, 'Switch': {'max_current': 5.0},
+}
 GMIN = 1e-12
 G_OFF = 1e-9
 R_ON = 0.1
 R_BE = 1000.0
 R_SAT = 0.1
-MAX_PWL_ITER = 60
+MAX_PWL_ITER = int(config.MAX_ITERATIONS)       # 100
+REGION_TOL = float(config.CONVERGENCE_THRESHOLD)  # 1e-6 V
 
 
 class CircuitError(Exception):
@@ -73,8 +85,9 @@ def component_type(data):
 
 def prop(comp, name):
     """Property with the component's default (as get_property(name, default) in components/*.py)."""
-    v = comp['properties'].get(name, DEFAULTS[comp['type']].get(name))
-    return v
+    if name in comp['properties']:
+        return comp['properties'][name]
+    return DEFAULTS[comp['type']].get(name, RATINGS.get(comp['type'], {}).get(name))
 
 
 class Netlist:
@@ -150,9 +163,9 @@ def initial_state(netlist):
     for c in netlist.components:
         t = c['type']
         if t == 'Capacitor':
-            st[c['id']] = {'v': 0.0}
+            st[c['id']] = {'v': 0.0, 'i': 0.0}
         elif t == 'Inductor':
-            st[c['id']] = {'i': 0.0}
+            st[c['id']] = {'i': 0.0, 'v': 0.0}
         elif t in ('Diode', 'LED'):
             st[c['id']] = {'on': False}
         elif t == 'BJT':
@@ -198,7 +211,7 @@ def _bjt(comp):
     return s, float(prop(comp, 'gain')), float(prop(comp, 'vbe_threshold')), float(prop(comp, 'vce_saturation'))
 
 
-def _assemble(net, st, h, t):
+def _assemble(net, st, h, t, trap):
     n, m = net.n, len(net.vsources)
     S = _Stamp(n + m)
     for k in range(1, n + 1):
@@ -208,14 +221,14 @@ def _assemble(net, st, h, t):
         if ty in ('Resistor', 'Switch'):
             r = max(float(prop(c, 'resistance')), 1e-6) if ty == 'Resistor' else (0.01 if prop(c, 'state') else 1e9)
             S.g(nd['p1'], nd['p2'], 1.0 / r)
-        elif ty == 'Capacitor':
-            g = max(float(prop(c, 'capacitance')), 1e-18) / h
+        elif ty == 'Capacitor':  # BE: i = C/h (v - v0); trapezoidal: i = 2C/h (v - v0) - i0
+            g = (2.0 if trap else 1.0) * max(float(prop(c, 'capacitance')), 1e-18) / h
             S.g(nd['p1'], nd['p2'], g)
-            S.i(nd['p2'], nd['p1'], g * st[cid]['v'])
-        elif ty == 'Inductor':
-            g = h / max(float(prop(c, 'inductance')), 1e-15)
+            S.i(nd['p2'], nd['p1'], g * st[cid]['v'] + (st[cid]['i'] if trap else 0.0))
+        elif ty == 'Inductor':  # BE: i = i0 + h/L v; trapezoidal: i = i0 + h/2L (v + v0)
+            g = h / ((2.0 if trap else 1.0) * max(float(prop(c, 'inductance')), 1e-15))
             S.g(nd['p1'], nd['p2'], g)
-            S.i(nd['p1'], nd['p2'], st[cid]['i'])
+            S.i(nd['p1'], nd['p2'], st[cid]['i'] + (g * st[cid]['v'] if trap else 0.0))
         elif ty == 'DCCurrentSource':
             S.i(nd['neg'], nd['pos'], float(prop(c, 'current')))
         elif ty in ('Diode', 'LED'):
@@ -257,14 +270,16 @@ def _assemble(net, st, h, t):
 
 
 def _update_regions(net, st, v):
-    """Move PWL devices to the region consistent with the solution v; return True if any changed."""
+    """Move PWL devices to the region consistent with the solution v (with REGION_TOL volts of hysteresis);
+    return True if any changed."""
     changed = False
+    tol = REGION_TOL
     for c in net.components:
         ty, nd, cid = c['type'], net.nodes[c['id']], c['id']
         if ty in ('Diode', 'LED'):
             vd = v[nd['anode']] - v[nd['cathode']]
             vf = float(prop(c, 'forward_voltage'))
-            on = (vd - vf) / R_ON > 0 if st[cid]['on'] else vd > vf
+            on = vd > vf - tol if st[cid]['on'] else vd > vf + tol
             if on != st[cid]['on']:
                 st[cid]['on'] = on
                 changed = True
@@ -274,23 +289,26 @@ def _update_regions(net, st, v):
             vce = s * (v[nd['collector']] - v[nd['emitter']])
             ib = (vbe - vth) / R_BE
             region = st[cid]['region']
-            if ib <= 0:
+            if region == 'cutoff':
+                new = 'cutoff' if vbe <= vth + tol else ('saturation' if vce < vsat else 'active')
+            elif vbe < vth - tol:
                 new = 'cutoff'
             elif region == 'saturation':
-                new = 'active' if (vce - vsat) / R_SAT > beta * ib else 'saturation'
+                new = 'active' if vce - vsat > R_SAT * beta * ib + tol else 'saturation'
             else:
-                new = 'saturation' if vce < vsat else 'active'
+                new = 'saturation' if vce < vsat - tol else 'active'
             if new != region:
                 st[cid]['region'] = new
                 changed = True
     return changed
 
 
-def solve_point(net, st, h, t):
-    """One backward-Euler step ending at time t: iterate PWL regions, return (v, x, iterations, converged)."""
+def solve_point(net, st, h, t, trap=False):
+    """One step of length h ending at time t (trapezoidal if trap else backward Euler): iterate PWL regions,
+    return (v, x, iterations, converged); iterations > 1 means some device changed region during the step."""
     size = net.n + len(net.vsources)
     for it in range(1, MAX_PWL_ITER + 1):
-        S = _assemble(net, st, h, t)
+        S = _assemble(net, st, h, t, trap)
         if size == 0:
             return np.zeros(1), np.zeros(0), it, True
         try:

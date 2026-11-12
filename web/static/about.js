@@ -7,16 +7,21 @@ route('about', () => {
   version runs the same solver in the browser, so the GitHub Pages site is a working simulator with no server.</p>
   <h2>The solver</h2>
   <p>Every frame advances the circuit by a fixed amount of simulated time (1 ms in the desktop app). Inside a frame
-  the engine takes backward-Euler steps of at most 10 µs (and at most 1/50 of the period of any AC source). Each step
+  the engine takes steps of at most 10 µs (and at most 1/50 of the period of any AC source). Each step
   builds the Modified Nodal Analysis system <span class="eq">A x = b</span> &mdash; node voltages plus one current
   per voltage source &mdash; and solves it by LU decomposition.</p>
   <ul>
-    <li><b>Capacitors and inductors</b> use backward-Euler companion models (a conductance C/h or h/L with a
-      history current source), starting from rest: uncharged capacitors, no inductor current.</li>
+    <li><b>Capacitors and inductors</b> use trapezoidal companion models (a conductance 2C/h or h/2L with a history
+      current source; error about 10<sup>−5</sup> at one RC time constant), starting from rest. After any sudden change
+      &mdash; the start, a switch flip or edited value, a diode or transistor changing state &mdash; three
+      backward-Euler steps are taken instead, which stops the trapezoidal rule's ringing.</li>
     <li><b>Diodes and LEDs</b> are piecewise linear: off (1 nS leakage) or on (forward voltage in series with 0.1 Ω).
       <b>BJTs</b> use the desktop model: base current (V<sub>BE</sub> − 0.7 V) / 1 kΩ, collector current β·I<sub>B</sub>
       in the active region, V<sub>CE</sub> held near 0.2 V in saturation. The engine iterates until every device is in
-      a self-consistent region.</li>
+      a self-consistent region (at most 100 passes, with 1 µV of hysteresis: the desktop app's
+      <code>MAX_ITERATIONS</code> and <code>CONVERGENCE_THRESHOLD</code>).</li>
+    <li><b>Ratings</b> (max power, voltage or current of each part, as in the desktop property dialog) never change
+      the solution: a part driven past its rating is outlined in red and its readout says by how much.</li>
     <li><b>Switches</b> are 0.01 Ω closed and 1 GΩ open. Every node has 10<sup>−12</sup> S to ground so a floating
       part cannot make the matrix singular; two different voltage sources in parallel are reported as unsolvable.</li>
     <li><b>Ground</b>: every node touching a ground symbol is 0 V. With no ground symbol, the − terminal of the first
@@ -28,8 +33,8 @@ route('about', () => {
   A DC current source pushes its current out of its + terminal.</p>
   <h3>Verification</h3>
   <p>The JavaScript engine (<code>circuit_engine.js</code>, <code>transient_engine.js</code>) is a line-by-line port of
-  <code>simulation/mna.py</code> and <code>simulation/transient.py</code>. A node test replays twelve circuits (the seven
-  examples plus RL, current-source, pnp, RLC-with-diode and closed-switch cases) and requires every terminal voltage and
+  <code>simulation/mna.py</code> and <code>simulation/transient.py</code>. A node test replays fourteen circuits (the seven
+  examples plus RL, current-source, pnp, RLC-with-diode, closed-switch, over-rated LED and a mid-run switch flip) and requires every terminal voltage and
   current to match the Python results to 1 part in 10<sup>9</sup>. Python tests check hand calculations: the divider
   midpoint, the RC and RL time constants, diode and LED currents, the RC low-pass amplitude and phase, BJT saturation.
   On the local app, the simulator's <b>Check vs Python</b> button runs your circuit through both engines.</p>

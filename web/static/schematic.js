@@ -195,7 +195,7 @@ export class Schematic {
     for (const c of Object.values(doc.components)) {
       const sel = this.selected?.kind === 'comp' && this.selected.id === c.id;
       const [hx, hy, hw, hh] = hitBox(c), [x, y] = c.position;
-      const r = R[c.id], over = r?.over_current;
+      const r = R[c.id], over = r?.overload;
       parts.push(`<g class="comp${sel ? ' sel' : ''}${over ? ' over' : ''}" data-kind="comp" data-id="${esc(c.id)}" transform="translate(${x * G},${y * G}) rotate(${c.rotation}) scale(${G})">`
         + `<rect class="hit" x="${hx}" y="${hy}" width="${hw}" height="${hh}"/><title>${esc(c.id)}</title>${symbol(c, r || {})}</g>`);
       const tp = Object.values(doc.terminals(c.id));

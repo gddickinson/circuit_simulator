@@ -2,13 +2,15 @@
 // (fixture: tests/fixtures/engine_fixture.json from scripts/make_engine_fixture.py) and hand-calculable circuits.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { DEFAULTS, TERMINALS, CircuitError } from './circuit_engine.js';
-import { Transient } from './transient_engine.js';
+import { DEFAULTS, TERMINALS, RATINGS, MAX_PWL_ITER, REGION_TOL, CircuitError } from './circuit_engine.js';
+import { Transient, BE_STEPS } from './transient_engine.js';
 import { parseValue, formatValue } from './units.js';
 
 const fx = JSON.parse(readFileSync(new URL('../../tests/fixtures/engine_fixture.json', import.meta.url)));
 assert.deepEqual(TERMINALS, fx.terminals, 'terminal names match simulation/mna.py');
 assert.deepEqual(DEFAULTS, fx.defaults, 'defaults match simulation/mna.py');
+assert.deepEqual(RATINGS, fx.ratings, 'ratings match simulation/mna.py');
+assert.deepEqual({ MAX_PWL_ITER, REGION_TOL, BE_STEPS }, fx.constants, 'iteration constants match');
 
 const close = (a, b, what) => {
   const tol = 1e-9 * Math.max(Math.abs(a), Math.abs(b)) + 1e-11;
@@ -16,8 +18,15 @@ const close = (a, b, what) => {
 };
 let worst = 0, checked = 0;
 for (const [name, c] of Object.entries(fx.cases)) {
-  const tr = new Transient(c.circuit);
+  const circ = structuredClone(c.circuit);
+  let tr = new Transient(circ);
   c.results.forEach((row, f) => {
+    if (c.toggle && f === c.toggle.frame) {  // flip the switch mid-run, keeping state and time
+      const p = circ.components[c.toggle.id].properties;
+      p.state = !p.state;
+      const nt = new Transient(circ, undefined, tr.state);
+      nt.t = tr.t; tr = nt; tr.discontinuity();
+    }
     const r = tr.advance(c.frame);
     for (const [cid, want] of Object.entries(row)) {
       for (const kind of ['v', 'i']) {
@@ -28,7 +37,7 @@ for (const [name, c] of Object.entries(fx.cases)) {
         }
       }
       close(r[cid].power, want.p, `${name} ${cid} power`);
-      for (const k of ['region', 'conducting']) if (k in want) assert.equal(r[cid][k], want[k], `${name} ${cid} ${k}`);
+      for (const k of ['region', 'conducting', 'overload']) assert.equal(r[cid][k], want[k], `${name} ${cid} ${k}`);
     }
   });
 }

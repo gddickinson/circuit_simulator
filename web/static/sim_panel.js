@@ -77,7 +77,7 @@ export function renderLive(host, c, r, onProbe) {
   if ('charge' in r) extras.push(`Q ${formatValue(r.charge, 'C')}`);
   if ('flux' in r) extras.push(`Φ ${formatValue(r.flux, 'Wb')}`);
   if ('energy' in r) extras.push(`E ${formatValue(r.energy, 'J')}`);
-  if (r.over_current) extras.push('<span class="err">above its max current rating</span>');
+  if (r.overload) extras.push(`<span class="err">⚠ over rating: ${esc(r.overload)}</span>`);
   const html = `<table class="live-tab"><tr><th>terminal</th><th>voltage</th><th>current in</th></tr>${rows}</table>
     <p class="small">power ${r.power >= 0 ? 'absorbed' : 'delivered'} <b>${formatValue(Math.abs(r.power), 'W', 4)}</b>${extras.length ? ' · ' + extras.join(' · ') : ''}</p>`;
   if (host.dataset.for !== c.id) {
