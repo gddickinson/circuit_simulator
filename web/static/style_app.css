@@ -1,0 +1,79 @@
+/* Circuit Simulator accents (amber trace / cyan probe / magenta) and page styles; the shared theme is style.css. */
+:root { --accent:#ffb02e; --accent2:#ff4fa3; --accent3:#3de0ff; --glow:rgba(255,176,46,.14); --wire:#7f8db0; }
+button, .btn { color:#1a0f00; }
+.mark { border-radius:4px; box-shadow:0 0 12px var(--accent), inset 0 0 0 3px var(--bg), inset 0 0 0 7px var(--accent3); }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+kbd { font:12px var(--mono); border:1px solid var(--line); border-radius:3px; padding:0 4px; color:var(--ink); }
+.bar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:6px 0; }
+.bar button, .bar .btn { margin:0; padding:7px 11px; }
+.bar select { width:auto; padding:6px 8px; }
+label.inl { display:inline; margin:0 0 0 6px; }
+
+/* simulator page */
+main:has(.sim) { max-width:1500px; }
+.simhead { display:flex; flex-wrap:wrap; gap:10px 24px; align-items:flex-end; justify-content:space-between; }
+.simhead h1 { margin-bottom:0; }
+.sim { display:grid; grid-template-columns:220px minmax(0,1fr) 270px; gap:14px; align-items:start; margin-top:8px; }
+.sim .panel { margin:0; padding:12px 14px; }
+.h-pal { margin:0 0 4px; font-size:17px; }
+.side-pal h3 { margin:10px 0 4px; }
+.palette { display:grid; grid-template-columns:repeat(2, 1fr); gap:5px; }
+.pal { margin:0; padding:4px 4px 3px; background:rgba(3,5,10,.85); color:var(--ink); box-shadow:inset 0 0 0 1px var(--line);
+  display:flex; flex-direction:column; align-items:center; gap:1px; font:500 10.5px var(--sans); text-transform:none; letter-spacing:0; }
+.pal:hover { box-shadow:inset 0 0 0 1px var(--accent); }
+.pal svg { width:52px; height:30px; }
+.sym, .board .comp { fill:none; stroke:#dfe8ff; stroke-width:.09; stroke-linecap:round; stroke-linejoin:round; }
+.sym .body, .board .body { fill:rgba(5,6,12,.9); }
+.sym .fillst, .board .fillst { fill:#dfe8ff; }
+.sym .glow { stroke:none; }
+.board-stage { background:#03050b; touch-action:none; }
+.board { display:block; width:100%; height:auto; user-select:none; -webkit-user-select:none; }
+.board:focus { outline:none; } .board:focus-visible { outline:2px solid var(--accent3); }
+.board-stage { background-image:radial-gradient(circle, rgba(127,141,176,.28) 1px, transparent 1.2px);
+  background-size:calc(100% / 44) calc(100% / 24); }
+.board .bg { fill:transparent; }
+.board .comp { cursor:grab; }
+.board .comp .hit { fill:transparent; stroke:none; }
+.board .comp.sel { stroke:var(--accent); filter:drop-shadow(0 0 4px var(--accent)); }
+.board .comp.sel .fillst { fill:var(--accent); }
+.board .comp.over { stroke:var(--bad); }
+.board .comp .glow { stroke:none; }
+.board .wire { fill:none; stroke-width:2.2; stroke-linejoin:round; }
+.board .wire.sel { stroke-width:3.2; filter:drop-shadow(0 0 4px var(--accent)); }
+.board .wire-hit { fill:none; stroke:transparent; stroke-width:12; cursor:pointer; }
+.board .term { fill:#03050b; stroke:var(--accent3); stroke-width:1.6; cursor:crosshair; }
+.board .term.linked { fill:var(--accent3); }
+.board .term:hover, .board .term.on { fill:var(--accent); stroke:var(--accent); r:6; }
+.board .val { fill:#c6d4ee; font:11px var(--mono); pointer-events:none; }
+.board .live { fill:var(--accent); font:600 10.5px var(--mono); pointer-events:none; }
+.board .rubber { stroke:var(--accent); stroke-dasharray:4 3; stroke-width:1.5; pointer-events:none; }
+.board.placing { cursor:copy; }
+.runbar #clock { margin-left:auto; color:var(--accent); }
+#status { min-height:1.4em; margin:4px 0; color:var(--accent3); }
+.scopewrap { border:1px solid var(--line); border-radius:6px; padding:6px; background:#020806; }
+#scope { display:block; width:100%; height:230px; }
+.scopebar { margin:6px 2px 0; }
+.trace { display:inline-flex; align-items:center; gap:4px; font:12px var(--mono); color:var(--c); border:1px solid var(--c);
+  border-radius:12px; padding:1px 4px 1px 9px; margin-right:4px; }
+.trace .x { background:transparent; color:var(--c); padding:0 5px; font-size:14px; line-height:1; box-shadow:none; }
+.side-sel label { margin:8px 0 3px; }
+.side-sel label.chk { display:flex; gap:8px; align-items:center; color:var(--ink); }
+.selhead { margin-bottom:4px; }
+.live-tab { font-size:12.5px; margin-top:8px; }
+.live-tab td, .live-tab th { padding:4px 6px; }
+.live-tab .num { font-family:var(--mono); text-align:right; white-space:nowrap; }
+
+/* examples */
+.excard .thumb { background:#03050b; border:1px solid var(--line); border-radius:4px; margin-bottom:8px; pointer-events:none; }
+.excard .board .term { r:2.5; }
+
+@media (max-width:1180px) {
+  .sim { grid-template-columns:200px minmax(0,1fr); }
+  .side-sel { grid-column:1 / -1; }
+}
+@media (max-width:760px) {
+  .sim { grid-template-columns:minmax(0,1fr); }
+  .side-pal .palette { grid-template-columns:repeat(4, 1fr); }
+  .runbar #clock { margin-left:0; }
+  #scope { height:180px; }
+}

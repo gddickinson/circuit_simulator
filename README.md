@@ -12,8 +12,9 @@ An interactive electronic circuit simulator built with Python and PyQt5. Place c
 - Multiple board modes for placing, wiring, and selecting
 
 ### Real-Time Simulation
-- Modified Nodal Analysis (MNA) circuit solver
-- Configurable timestep (default 1ms), convergence threshold, and iteration limits
+- Modified Nodal Analysis (MNA) circuit solver (`simulation/mna.py`, `simulation/transient.py`): backward-Euler
+  capacitor/inductor models in sub-steps of at most 10 µs inside each frame, piecewise-linear diodes, LEDs and BJTs
+- Configurable frame timestep (default 1ms of simulated time per update)
 - Live voltage and current visualization with color-coded feedback
 - 30 FPS simulation update loop
 
@@ -28,7 +29,8 @@ An interactive electronic circuit simulator built with Python and PyQt5. Place c
 - **Passive**: Resistors (1k default), Capacitors (1uF), Inductors (1mH), Ground
 - **Active**: Diodes, LEDs, BJTs, Switches
 - **Sources**: DC Voltage (5V), AC Voltage (5V, 1kHz), DC Current (10mA)
-- **Meters**: Voltmeter, Ammeter
+- **Meters**: Voltmeter, Ammeter, Oscilloscope and Multimeter classes are defined in `components/meters.py` but cannot
+  yet be placed on the board (the board and file loader create only the components listed above)
 - All components stored in an SQLite database with configurable default properties
 
 ### File Operations
@@ -46,13 +48,15 @@ circuit_simulator/
   components/              # Component definitions
     base_component.py      # Abstract base class (connections, state, properties)
     passive_components.py  # Resistor, Capacitor, Inductor, Ground
-    active_components.py   # Diode, LED, BJT, Switch
-    sources.py             # DC/AC Voltage, DC Current sources
+    active_components.py   # DC/AC voltage and DC current sources, Diode, LED, BJT, Switch (used by the app)
+    sources.py             # Alternative source classes (not used by the board)
     meters.py              # Voltmeter, Ammeter
     wires.py               # Wire connections
   simulation/              # Simulation engine
     simulator.py           # CircuitSimulator: node management, event system
-    circuit_solver.py      # MNA-based circuit solver
+    circuit_solver.py      # CircuitSolver: binds the MNA engine to the simulator
+    mna.py                 # Modified Nodal Analysis engine (Qt-free)
+    transient.py           # Time stepping + per-component readouts
     physics.py             # Component physics models
     analysis.py            # Circuit analysis utilities
   gui/                     # User interface
@@ -121,6 +125,31 @@ Default settings are stored in `~/.circuit_simulator/config.json` and can be ove
 - **Simulation**: timestep (1ms), max steps (10000), convergence (1e-6), max iterations (100)
 - **GUI**: grid size (20px), component size (60px), wire thickness (2px)
 - **Colors**: background, grid, wire, selection, voltage high/low, current
+
+## Web interface
+
+The same simulator runs in the browser: <https://gddickinson.github.io/circuit_simulator/> (GitHub Pages, no server
+needed). Draw a schematic on the grid (place, drag, rotate, delete, wire terminal to terminal), edit values with SI
+units (`4.7k`, `10u`, `2.2 MΩ`), press Run and read live voltages and currents on every part, with wires coloured by
+node voltage and an oscilloscope plotting up to four probes. The seven example circuits of
+`examples/basic_circuits.py` are included, and circuits save to and open from the desktop app's `.circuit` format.
+
+![Simulator: AC source into an RC low-pass, with the oscilloscope](docs/img/sim_ac.png)
+![Simulator: RC charging](docs/img/sim_rc.png)
+![Example circuits](docs/img/examples.png)
+
+The engine in the browser (`web/static/circuit_engine.js`, `transient_engine.js`) is a port of `simulation/mna.py` and
+`simulation/transient.py`; a node test replays twelve circuits and matches every terminal voltage and current of the
+Python engine to 1 part in 10^9 (in practice ~1e-13).
+
+### Run the web app
+
+```bash
+pip install -r requirements-web.txt
+python run_web.py            # http://127.0.0.1:8234 ; adds a "Check vs Python" button on the simulator page
+python -m pytest -q tests    # solver, file format, fixture and web tests (needs node for the JS engine test)
+python scripts/build_static.py --out site   # the static site that .github/workflows/pages.yml publishes
+```
 
 ## License
 
